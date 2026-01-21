@@ -104,8 +104,24 @@ export default class CloudflareSessionManager {
                     }
                 },
                 (error: any) => {
-                    logger.error('Failed to request Cloudflare session:', error);
-                    reject(new Error(`Failed to request session: ${error}`));
+                    // Try to extract error details from the IQ error response
+                    let errorDetails = String(error);
+
+                    if (error instanceof Element) {
+                        const errorEl = error.querySelector('error');
+
+                        if (errorEl) {
+                            const errorType = errorEl.getAttribute('type') || 'unknown';
+                            const errorCode = errorEl.getAttribute('code') || '';
+                            // Get the first child element name which indicates the error condition
+                            const errorCondition = errorEl.firstElementChild?.tagName || 'unknown';
+                            const errorText = errorEl.querySelector('text')?.textContent || '';
+
+                            errorDetails = `type=${errorType}, code=${errorCode}, condition=${errorCondition}, text=${errorText}`;
+                        }
+                    }
+                    logger.error('Failed to request Cloudflare session. Error details:', errorDetails);
+                    reject(new Error(`Failed to request session: ${errorDetails}`));
                 },
                 30000 // 30 second timeout
             );
