@@ -81,6 +81,10 @@ import {
 } from './service/statistics/AnalyticsEvents';
 import { XMPPEvents } from './service/xmpp/XMPPEvents';
 
+// Cloudflare SFU integration
+import CloudflarePeerConnection from './modules/RTC/CloudflarePeerConnection';
+import CloudflareSessionManager from './modules/cloudflare/CloudflareSessionManager';
+
 export interface IConferenceOptions {
     config: {
         _p2pConnStatusRtcMuteTimeout?: number;
@@ -93,7 +97,14 @@ export interface IConferenceOptions {
         applicationName?: string;
         avgRtpStatsN?: number;
         channelLastN?: number;
+        // Cloudflare SFU feature flag
+        cloudflare?: {
+            enabled?: boolean;
+        };
         confID?: string;
+        e2ee?: {
+            enabled?: boolean;
+        };
         createVADProcessor?: () => IVADProcessor;
         deploymentInfo?: {
             userRegion?: string;
@@ -292,6 +303,8 @@ export default class JitsiConference extends Listenable {
     public participants: Map<string, JitsiParticipant>;
     public componentsVersions: ComponentsVersions;
     public jvbJingleSession?: JingleSessionPC;
+    public cloudflarePeerConnection?: CloudflarePeerConnection | null;
+    public cloudflareSessionManager?: CloudflareSessionManager | null;
     public lastDominantSpeaker?: string;
     public dtmfManager?: object;
     public somebodySupportsDTMF: boolean;
@@ -381,6 +394,19 @@ export default class JitsiConference extends Listenable {
          * @type {JingleSessionPC}
          */
         this.jvbJingleSession = null;
+
+        /**
+         * Cloudflare SFU peer connection (alternative to JVB).
+         * @type {CloudflarePeerConnection}
+         */
+        this.cloudflarePeerConnection = null;
+
+        /**
+         * Cloudflare session manager for handling session creation and management.
+         * @type {CloudflareSessionManager}
+         */
+        this.cloudflareSessionManager = null;
+
         this.lastDominantSpeaker = null;
         this.dtmfManager = null;
         this.somebodySupportsDTMF = false;
@@ -2158,16 +2184,22 @@ export default class JitsiConference extends Listenable {
         const addPromises = [];
 
         if (track.conference === this) {
-            if (this.jvbJingleSession) {
-                addPromises.push(this.jvbJingleSession.addTrackToPc(track));
+            // Use Cloudflare SFU if enabled, otherwise use JVB/P2P
+            if (this.options.config.cloudflare?.enabled && this.cloudflarePeerConnection) {
+                logger.debug('Adding track to Cloudflare peer connection');
+                addPromises.push(this.cloudflarePeerConnection.addTrack(track));
             } else {
-                logger.debug('Add local MediaStream - no JVB Jingle session started yet');
-            }
+                if (this.jvbJingleSession) {
+                    addPromises.push(this.jvbJingleSession.addTrackToPc(track));
+                } else {
+                    logger.debug('Add local MediaStream - no JVB Jingle session started yet');
+                }
 
-            if (this.p2pJingleSession) {
-                addPromises.push(this.p2pJingleSession.addTrackToPc(track));
-            } else {
-                logger.debug('Add local MediaStream - no P2P Jingle session started yet');
+                if (this.p2pJingleSession) {
+                    addPromises.push(this.p2pJingleSession.addTrackToPc(track));
+                } else {
+                    logger.debug('Add local MediaStream - no P2P Jingle session started yet');
+                }
             }
         } else {
             // If the track hasn't been added to the conference yet because of start muted by focus, add it to the
@@ -2307,7 +2339,14 @@ export default class JitsiConference extends Listenable {
      */
     public join(password: string = '', replaceParticipant: boolean = false) {
         if (this.room) {
-            this.room.join(password, replaceParticipant).then(() => this._maybeSetSITimeout());
+            this.room.join(password, replaceParticipant).then(() => {
+                this._maybeSetSITimeout();
+                
+                // Initialize Cloudflare SFU if enabled
+                if (this.options.config.cloudflare?.enabled) {
+                    this._initializeCloudflare();
+                }
+            });
         }
     }
 
@@ -2891,8 +2930,13 @@ export default class JitsiConference extends Listenable {
                 track.setSourceName(sourceName);
                 const addTrackPromises = [];
 
-                this.p2pJingleSession && addTrackPromises.push(this.p2pJingleSession.addTracks([ track ]));
-                this.jvbJingleSession && addTrackPromises.push(this.jvbJingleSession.addTracks([ track ]));
+                // Use Cloudflare SFU if enabled, otherwise use JVB/P2P
+                if (this.options.config.cloudflare?.enabled && this.cloudflarePeerConnection) {
+                    addTrackPromises.push(this.cloudflarePeerConnection.addTrack(track));
+                } else {
+                    this.p2pJingleSession && addTrackPromises.push(this.p2pJingleSession.addTracks([ track ]));
+                    this.jvbJingleSession && addTrackPromises.push(this.jvbJingleSession.addTracks([ track ]));
+                }
 
                 return Promise.all(addTrackPromises)
                     .then(() => {
@@ -4655,6 +4699,82 @@ export default class JitsiConference extends Listenable {
         }
 
         return Promise.reject(new Error('The conference is not created yet!'));
+    }
+
+    /**
+     * Initializes Cloudflare SFU connection and track subscription manager.
+     * @private
+     * @returns {Promise<void>}
+     */
+    private async _initializeCloudflare(): Promise<void> {
+        if (!this.room) {
+            logger.error('Cannot initialize Cloudflare - no room');
+
+            return;
+        }
+
+        logger.info('Initializing Cloudflare SFU connection');
+
+        try {
+            // Create session manager
+            this.cloudflareSessionManager = new CloudflareSessionManager(
+                this.connection.xmpp.connection,
+                this.room.roomjid
+            );
+
+            // Request session from Prosody
+            const sessionInfo = await this.cloudflareSessionManager.requestSession();
+
+            logger.info('Cloudflare session received:', sessionInfo.sessionId);
+
+            // Get ICE servers (TURN credentials)
+            const iceServers = this.rtc.options.iceServers || [];
+
+            // Create peer connection
+            this.cloudflarePeerConnection = new CloudflarePeerConnection(
+                this.rtc,
+                1, // ID
+                this.rtc.eventEmitter,
+                iceServers,
+                {
+                    enableInsertableStreams: this.options.config.e2ee?.enabled || false,
+                    startSilent: this.options.config.startSilent || false
+                }
+            );
+
+            // Initialize with session info
+            await this.cloudflarePeerConnection.initialize(sessionInfo);
+
+            logger.info('Cloudflare peer connection initialized');
+
+            // Set up remote track handling
+            this.rtc.addListener(RTCEvents.REMOTE_TRACK_ADDED, (track: JitsiRemoteTrack) => {
+                logger.info('Cloudflare remote track added:', track.getType(), track.getParticipantId());
+                this.onRemoteTrackAdded(track);
+            });
+
+            this.rtc.addListener(RTCEvents.REMOTE_TRACK_REMOVED, (track: JitsiRemoteTrack) => {
+                logger.info('Cloudflare remote track removed:', track.getType(), track.getParticipantId());
+                this.onRemoteTrackRemoved(track);
+            });
+
+            // Add any existing local tracks
+            const localTracks = this.rtc.getLocalTracks();
+
+            for (const track of localTracks) {
+                await this.cloudflarePeerConnection.addTrack(track);
+                logger.info('Added existing local track to Cloudflare:', track.getType());
+            }
+
+            logger.info('Cloudflare SFU initialization complete');
+        } catch (error) {
+            logger.error('Failed to initialize Cloudflare SFU:', error);
+            this.eventEmitter.emit(
+                JitsiConferenceEvents.CONFERENCE_FAILED,
+                JitsiConferenceErrors.CONNECTION_ERROR,
+                error
+            );
+        }
     }
 
     /**
