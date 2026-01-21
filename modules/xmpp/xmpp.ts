@@ -59,6 +59,7 @@ interface IConnectionCredentials {
  */
 interface IRoomCreationOptions {
     customDomain?: string;
+    disableFocus?: boolean;
     statsId?: string;
 }
 

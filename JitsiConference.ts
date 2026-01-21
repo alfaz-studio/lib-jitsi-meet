@@ -593,10 +593,19 @@ export default class JitsiConference extends Listenable {
         const { config } = this.options;
 
         this._statsCurrentId = config.statisticsId ?? Settings.callStatsUserName;
+
+        // When Cloudflare SFU is enabled, disable Jicofo (focus)
+        const disableFocus = config.cloudflare?.enabled === true;
+
+        if (disableFocus) {
+            logger.info('Cloudflare SFU enabled - disabling Jicofo (focus)');
+        }
+
         this.room = this._xmpp.createRoom(
             this.options.name, {
                 ...config,
-                statsId: this._statsCurrentId
+                statsId: this._statsCurrentId,
+                disableFocus
             },
             JitsiConference.resourceCreator
         );
