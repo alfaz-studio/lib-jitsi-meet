@@ -1,4 +1,4 @@
-import { $iq } from 'strophe.js';
+import { $iq, Strophe } from 'strophe.js';
 import { getLogger } from '@jitsi/logger';
 
 import { ICloudflareSessionInfo } from '../RTC/CloudflarePeerConnection';
@@ -13,6 +13,7 @@ const logger = getLogger('cloudflare:SessionManager');
 export default class CloudflareSessionManager {
     private _connection: XmppConnection;
     private _roomJid: string;
+    private _domain: string;
     private _sessionInfo: ICloudflareSessionInfo | null = null;
 
     /**
@@ -25,7 +26,13 @@ export default class CloudflareSessionManager {
         this._connection = connection;
         this._roomJid = roomJid;
 
-        logger.info('CloudflareSessionManager created for room:', roomJid);
+        // Extract main domain from room JID (e.g., conference.staj.sonacove.com -> staj.sonacove.com)
+        const roomDomain = Strophe.getDomainFromJid(roomJid) || '';
+
+        // Remove "conference." prefix if present to get main domain
+        this._domain = roomDomain.replace(/^conference\./, '');
+
+        logger.info('CloudflareSessionManager created for room:', roomJid, 'domain:', this._domain);
     }
 
     /**
@@ -44,11 +51,16 @@ export default class CloudflareSessionManager {
 
         return new Promise((resolve, reject) => {
             // Create IQ stanza to request Cloudflare session
+            // Send to the main domain where mod_cloudflare_session is loaded
+            // Include room JID in the query so Prosody knows which room
             const iq = $iq({
-                to: this._roomJid,
+                to: this._domain,
                 type: 'get'
             })
-                .c('cloudflare-session', { xmlns: 'urn:xmpp:jitsi:cloudflare:0' });
+                .c('cloudflare-session', {
+                    xmlns: 'urn:xmpp:jitsi:cloudflare:0',
+                    room: this._roomJid
+                });
 
             // Send IQ request
             this._connection.sendIQ(
