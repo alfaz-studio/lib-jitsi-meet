@@ -66,8 +66,15 @@ let disableAGC = false;
 let stereo = null;
 
 const featureDetectionAudioEl = document.createElement('audio');
+
+// Safari iOS exposes setSinkId on the prototype but always rejects with a permission error
+// because iOS does not support audio output device selection. Detect this by checking for
+// Safari on iOS/iPadOS and disabling the feature entirely to avoid cascading errors when
+// attaching remote audio tracks.
+const isSafariIOS = /iP(hone|od|ad)/.test(navigator.userAgent)
+    || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1); // iPadOS
 const isAudioOutputDeviceChangeAvailable
-    = typeof featureDetectionAudioEl.setSinkId !== 'undefined';
+    = typeof featureDetectionAudioEl.setSinkId !== 'undefined' && !isSafariIOS;
 
 let availableDevices = [];
 let availableDevicesPollTimer;
