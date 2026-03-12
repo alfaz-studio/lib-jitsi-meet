@@ -70,12 +70,12 @@ interface IAudioConstraints {
         chromeMediaSource?: string;
         chromeMediaSourceId?: string;
     };
-    optional?: {
+    optional?: Array<{
         autoGainControl?: boolean;
         channelCount?: number;
         echoCancellation?: boolean;
         noiseSuppression?: boolean;
-    };
+    }>;
 }
 
 /**
@@ -303,7 +303,7 @@ class ScreenObtainer {
 
                             if (typeof optionalConstraints !== 'boolean') {
                                 audioConstraints = {
-                                    optional: optionalConstraints
+                                    optional: [ optionalConstraints ]
                                 };
                             }
 
