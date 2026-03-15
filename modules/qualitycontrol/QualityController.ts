@@ -27,7 +27,7 @@ const logger = getLogger('qc:QualityController');
 
 // Period for which the client will wait for the cpu limitation flag to be reset in the peerconnection stats before it
 // attempts to rectify the situation by attempting a codec switch.
-const LIMITED_BY_CPU_TIMEOUT = 60000;
+const LIMITED_BY_CPU_TIMEOUT = 30000;
 
 // The min. value that lastN will be set to while trying to fix video qaulity issues.
 const MIN_LAST_N = 3;
