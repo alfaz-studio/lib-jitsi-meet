@@ -71,6 +71,7 @@ import { IReceiverAudioSubscriptionMessage } from './service/RTC/ReceiverAudioSu
 import { SignalingEvents } from './service/RTC/SignalingEvents';
 import { getMediaTypeFromSourceName, getSourceNameForJitsiTrack } from './service/RTC/SignalingLayer';
 import { VideoType } from './service/RTC/VideoType';
+import { ConnectionQualityEvents } from './service/connectivity/ConnectionQualityEvents';
 import { MAX_CONNECTION_RETRIES } from './service/connectivity/Constants';
 import {
     AnalyticsEvents,
@@ -413,6 +414,18 @@ export default class JitsiConference extends Listenable {
          * quality.
          */
         this.connectionQuality = new ConnectionQuality(this, this.eventEmitter, options);
+
+        // When zero-media zombie state is detected, restart the media session
+        // to recover. This reuses the existing ICE failure recovery path
+        // (Jicofo re-invites with a new session-initiate).
+        this.eventEmitter.on(
+            ConnectionQualityEvents.ZERO_MEDIA_DETECTED,
+            () => {
+                logger.warn('Zero-media zombie detected, restarting media sessions');
+                Statistics.sendAnalyticsAndLog(
+                    createConferenceEvent('zero.media.recovery'));
+                this._restartMediaSessions();
+            });
 
         /**
          * Reports average RTP statistics to the analytics module.
@@ -1121,9 +1134,10 @@ export default class JitsiConference extends Listenable {
      * Resumes media transfer over the JVB connection.
      * @private
      */
-    private _resumeMediaTransferForJvbConnection(): void {
+    private _resumeMediaTransferForJvbConnection(): Promise<void> {
         logger.info('Resuming media transfer over the JVB connection...');
-        this.jvbJingleSession.setMediaTransferActive(true)
+
+        return this.jvbJingleSession.setMediaTransferActive(true)
             .then(() => {
                 logger.info('Resumed media transfer over the JVB connection!');
             })
@@ -1379,7 +1393,15 @@ export default class JitsiConference extends Listenable {
         // Swap remote tracks, but only if the P2P has been fully established
         if (wasP2PEstablished) {
             if (this.jvbJingleSession && !requestRestart) {
-                this._resumeMediaTransferForJvbConnection();
+                // Chain _addRemoteJVBTracks onto the media transfer promise to avoid
+                // a race where tracks are added before media transfer is actually enabled.
+                this._resumeMediaTransferForJvbConnection()
+                    .then(() => {
+                        if (this.jvbJingleSession) {
+                            this._addRemoteJVBTracks();
+                        }
+                    })
+                    .catch(err => logger.error('Failed to resume JVB media and add tracks', err));
             }
 
             // Remove remote P2P tracks
@@ -1427,13 +1449,8 @@ export default class JitsiConference extends Listenable {
         // Update P2P status and other affected events/states
         this._setP2PStatus(false);
 
-        if (wasP2PEstablished) {
-            // Add back remote JVB tracks
-            if (this.jvbJingleSession && !requestRestart) {
-                this._addRemoteJVBTracks();
-            } else {
-                logger.info('Not adding remote JVB tracks - no session yet');
-            }
+        if (wasP2PEstablished && (!this.jvbJingleSession || requestRestart)) {
+            logger.info('Not adding remote JVB tracks - no session yet or restart requested');
         }
     }
 
