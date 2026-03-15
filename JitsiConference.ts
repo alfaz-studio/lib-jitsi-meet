@@ -423,7 +423,7 @@ export default class JitsiConference extends Listenable {
             () => {
                 logger.warn('Zero-media zombie detected, restarting media sessions');
                 Statistics.sendAnalyticsAndLog(
-                    createConferenceEvent('zero.media.recovery'));
+                    createConferenceEvent('zero.media.recovery', {}));
                 this._restartMediaSessions();
             });
 

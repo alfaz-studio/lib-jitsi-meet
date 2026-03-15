@@ -523,10 +523,9 @@ export default class ConnectionQuality {
 
                 this.eventEmitter.emit(ConnectionQualityEvents.ZERO_MEDIA_DETECTED);
 
-                // Reset counter to avoid firing repeatedly — let recovery handle it.
-                // If media doesn't resume, we'll fire again after another round.
+                // Reset counter to avoid firing on the very next sample. Keep _hadMediaFlow
+                // true so re-detection works if recovery fails and media stays at zero.
                 this._consecutiveZeroBitrateSamples = 0;
-                this._hadMediaFlow = false;
             }
         }
 

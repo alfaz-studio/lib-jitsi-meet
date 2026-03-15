@@ -71,16 +71,15 @@ export default class IceFailedHandling {
      * @returns {void}
      */
     start(): void {
-        //  Using xmpp.ping allows to handle both XMPP being disconnected and internet offline cases. The ping function
+        // Using xmpp.ping allows to handle both XMPP being disconnected and internet offline cases. The ping function
         // uses sendIQ2 method which is resilient to XMPP connection disconnected state and will patiently wait until it
         // gets reconnected.
-        //  This also handles the case about waiting for the internet to come back online, because ping
+        // This also handles the case about waiting for the internet to come back online, because ping
         // will only succeed when the internet is online and then there's a chance for the ICE to recover from FAILED to
         // CONNECTED which is the extra 2 second timeout after ping.
-        //  The 65 second timeout is given on purpose as there's no chance for XMPP to recover after 65 seconds of no
-        // communication with the server. Such resume attempt will result in unrecoverable conference failed event due
-        // to 'item-not-found' error returned by the server.
-        this._conference.xmpp.ping(65000).then(
+        // 15 second timeout covers most XMPP stream resumption scenarios (max 3 retries at 1.5-27s jitter).
+        // The jitsi-meet overlay middleware provides a separate safety net for longer outages.
+        this._conference.xmpp.ping(15000).then(
             () => {
                 if (!this._canceled) {
                     this._iceFailedTimeout = window.setTimeout(() => {
