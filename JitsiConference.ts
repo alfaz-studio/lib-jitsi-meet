@@ -279,6 +279,7 @@ export default class JitsiConference extends Listenable {
     private _videoSenderLimitReached?: boolean;
     private _firefoxP2pEnabled: boolean;
     private _iceRestarts: number;
+    private _zeroMediaRecoveryAttempts: number;
     private _unsubscribers: Array<() => void>;
     private _xmpp: XMPP;
 
@@ -418,10 +419,25 @@ export default class JitsiConference extends Listenable {
         // When zero-media zombie state is detected, restart the media session
         // to recover. This reuses the existing ICE failure recovery path
         // (Jicofo re-invites with a new session-initiate).
+        // Capped at 3 attempts — if recovery consistently fails, stop thrashing
+        // and let the user or other recovery mechanisms (ICE failed, XMPP ping)
+        // take over. The counter resets when a new session successfully establishes.
         this.eventEmitter.on(
             ConnectionQualityEvents.ZERO_MEDIA_DETECTED,
             () => {
-                logger.warn('Zero-media zombie detected, restarting media sessions');
+                const MAX_ZERO_MEDIA_RECOVERY_ATTEMPTS = 3;
+
+                this._zeroMediaRecoveryAttempts++;
+                if (this._zeroMediaRecoveryAttempts > MAX_ZERO_MEDIA_RECOVERY_ATTEMPTS) {
+                    logger.warn('Zero-media zombie detected but recovery attempts exhausted'
+                        + ` (${this._zeroMediaRecoveryAttempts - 1}/${MAX_ZERO_MEDIA_RECOVERY_ATTEMPTS}),`
+                        + ' giving up');
+
+                    return;
+                }
+
+                logger.warn('Zero-media zombie detected, restarting media sessions'
+                    + ` (attempt ${this._zeroMediaRecoveryAttempts}/${MAX_ZERO_MEDIA_RECOVERY_ATTEMPTS})`);
                 Statistics.sendAnalyticsAndLog(
                     createConferenceEvent('zero.media.recovery', {}));
                 this._restartMediaSessions();
@@ -532,6 +548,7 @@ export default class JitsiConference extends Listenable {
          * Number of times ICE restarts that have been attempted after ICE connectivity with the JVB was lost.
          */
         this._iceRestarts = 0;
+        this._zeroMediaRecoveryAttempts = 0;
         this._unsubscribers = [];
     }
 
@@ -1952,6 +1969,7 @@ export default class JitsiConference extends Listenable {
         }
 
         if (jingleSession.isP2P === this.isP2PActive()) {
+            this._zeroMediaRecoveryAttempts = 0;
             this.eventEmitter.emit(JitsiConferenceEvents.CONNECTION_ESTABLISHED);
         }
 
