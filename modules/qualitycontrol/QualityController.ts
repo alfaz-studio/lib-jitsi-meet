@@ -206,8 +206,12 @@ export class QualityController {
         if (this._lastNRampupTimeout) {
             window.clearTimeout(this._lastNRampupTimeout);
             this._lastNRampupTimeout = undefined;
-            this._lastNRampupBlockedAt = Date.now();
         }
+
+        // Always stamp the block time so the NONE-path cannot schedule a rampup
+        // immediately after lastN was just lowered. Also refreshes the window if
+        // limitation is ongoing, preventing premature unblock.
+        this._lastNRampupBlockedAt = Date.now();
     }
 
     /**
