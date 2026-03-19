@@ -94,7 +94,10 @@ export interface ILocalStats {
         upload?: number;
     };
     bitrate?: {
+        audio?: { download: number; upload: number; };
+        download?: number;
         upload: number;
+        video?: { download: number; upload: number; };
     };
     bridgeCount?: number;
     connectionQuality: number;
@@ -117,9 +120,16 @@ export type IRemoteStats = Pick<
  * connection. A value of 100% indicates a very good network connection, and a
  * value of 0% indicates a poor connection.
  */
+/**
+ * Number of consecutive zero video bitrate samples required before emitting VIDEO_ZERO_MEDIA_DETECTED.
+ */
+const ZERO_VIDEO_BITRATE_SAMPLE_THRESHOLD = 3;
+
 export default class ConnectionQuality {
     private eventEmitter: EventEmitter;
     private _conference: JitsiConference;
+    private _consecutiveZeroVideoBitrateSamples: number;
+    private _hadVideoMediaFlow: boolean;
     private _localStats: ILocalStats;
     private _lastConnectionQualityUpdate: number;
     private _options: IConferenceOptions;
@@ -140,6 +150,9 @@ export default class ConnectionQuality {
          * The owning JitsiConference.
          */
         this._conference = conference;
+
+        this._consecutiveZeroVideoBitrateSamples = 0;
+        this._hadVideoMediaFlow = false;
 
         /**
          * Holds statistics about the local connection quality.
@@ -233,6 +246,8 @@ export default class ConnectionQuality {
                 if (track.isVideoTrack()) {
                     if (track.isMuted()) {
                         this._timeVideoUnmuted = -1;
+                        this._hadVideoMediaFlow = false;
+                        this._consecutiveZeroVideoBitrateSamples = 0;
                     } else {
                         this._maybeUpdateUnmuteTime();
                     }
@@ -475,6 +490,25 @@ export default class ConnectionQuality {
 
         this.eventEmitter.emit(ConnectionQualityEvents.LOCAL_STATS_UPDATED, this._localStats);
         this._broadcastLocalStats();
+
+        // Video-only starvation detection: if there's an active local video track
+        // (camera or desktop) and video upload bitrate has been 0 for consecutive
+        // samples while audio flows, the video encoding may be stuck.
+        const videoUpload = this._localStats.bitrate?.video?.upload ?? 0;
+        const hasActiveVideoTrack = !isMuted;
+
+        if (videoUpload > 0) {
+            this._hadVideoMediaFlow = true;
+            this._consecutiveZeroVideoBitrateSamples = 0;
+        } else if (this._hadVideoMediaFlow && hasActiveVideoTrack) {
+            this._consecutiveZeroVideoBitrateSamples++;
+
+            if (this._consecutiveZeroVideoBitrateSamples >= ZERO_VIDEO_BITRATE_SAMPLE_THRESHOLD) {
+                logger.warn('Video-only zero media detected');
+                this.eventEmitter.emit(ConnectionQualityEvents.VIDEO_ZERO_MEDIA_DETECTED);
+                this._consecutiveZeroVideoBitrateSamples = 0;
+            }
+        }
     }
 
     /**

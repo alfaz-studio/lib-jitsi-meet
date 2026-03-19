@@ -71,6 +71,7 @@ import { IReceiverAudioSubscriptionMessage } from './service/RTC/ReceiverAudioSu
 import { SignalingEvents } from './service/RTC/SignalingEvents';
 import { getMediaTypeFromSourceName, getSourceNameForJitsiTrack } from './service/RTC/SignalingLayer';
 import { VideoType } from './service/RTC/VideoType';
+import { ConnectionQualityEvents } from './service/connectivity/ConnectionQualityEvents';
 import { MAX_CONNECTION_RETRIES } from './service/connectivity/Constants';
 import {
     AnalyticsEvents,
@@ -413,6 +414,15 @@ export default class JitsiConference extends Listenable {
          * quality.
          */
         this.connectionQuality = new ConnectionQuality(this, this.eventEmitter, options);
+
+        // When video-only zero media is detected (audio still flowing but video bitrate stuck at 0),
+        // reconfigure sender constraints to recover video encoding.
+        this.eventEmitter.addListener(
+            ConnectionQualityEvents.VIDEO_ZERO_MEDIA_DETECTED,
+            () => {
+                logger.warn('Video-only zero media detected, reconfiguring sender constraints');
+                this.qualityController?.sendVideoController.configureConstraintsForLocalSources();
+            });
 
         /**
          * Reports average RTP statistics to the analytics module.
@@ -841,6 +851,8 @@ export default class JitsiConference extends Listenable {
      * @returns {void}
      */
     private _restartMediaSessions(): void {
+        this._iceRestarts = 0;
+
         if (this.p2pJingleSession) {
             this._stopP2PSession({
                 reasonDescription: 'restart',
@@ -1807,6 +1819,14 @@ export default class JitsiConference extends Listenable {
         if (session.isP2P === this.isP2PActive()) {
             this.eventEmitter.emit(JitsiConferenceEvents.CONNECTION_RESTORED);
         }
+
+        // Resend receiver constraints after ICE recovery to correct any stale
+        // constraints (e.g., maxHeight:0) that were sent during the interruption.
+        this.qualityController?.receiveVideoController.resendCurrentConstraints();
+
+        // Reconfigure sender constraints to ensure the sender re-applies its
+        // current constraint state after the connection is restored.
+        this.qualityController?.sendVideoController.configureConstraintsForLocalSources();
     }
 
     /**
@@ -2621,6 +2641,27 @@ export default class JitsiConference extends Listenable {
         this.p2pJingleSession && sessions.push(this.p2pJingleSession);
 
         return sessions;
+    }
+
+    /**
+     * Restarts all active media sessions. Resets the ICE restart counter so
+     * the internal retry mechanism starts fresh after the restart.
+     *
+     * @returns {void}
+     */
+    public restartMediaSessions(): void {
+        this._restartMediaSessions();
+    }
+
+    /**
+     * Force-resends the current receiver video constraints to both the bridge
+     * channel and P2P peer, bypassing the equality check. Used to correct
+     * stale constraints (e.g., maxHeight:0) sent during a network interruption.
+     *
+     * @returns {void}
+     */
+    public resendReceiverConstraints(): void {
+        this.qualityController?.receiveVideoController.resendCurrentConstraints();
     }
 
     /**
