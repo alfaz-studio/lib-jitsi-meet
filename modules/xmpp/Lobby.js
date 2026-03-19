@@ -1,7 +1,10 @@
 import { getLogger } from '@jitsi/logger';
 import { $msg, Strophe } from 'strophe.js';
 
+import { AUTH_ERROR_TYPES } from '../../JitsiConferenceErrors';
 import { XMPPEvents } from '../../service/xmpp/XMPPEvents';
+
+import { handleStropheError } from './StropheErrorHandler';
 
 const logger = getLogger('xmpp:Lobby');
 
@@ -253,6 +256,7 @@ export default class Lobby {
                 customDomain,
                 disableDiscoInfo: true,
                 disableFocus: true,
+                disableRoomCreationRetry: true,
                 enableLobby: false
             }
         );
@@ -381,12 +385,22 @@ export default class Lobby {
                 }
             });
             this.lobbyRoom.addEventListener(XMPPEvents.ROOM_JOIN_ERROR, reject);
-            this.lobbyRoom.addEventListener(XMPPEvents.ROOM_CONNECT_NOT_ALLOWED_ERROR, reject);
             this.lobbyRoom.addEventListener(XMPPEvents.ROOM_CONNECT_ERROR, reject);
+            this.lobbyRoom.addEventListener(XMPPEvents.ROOM_CONNECT_NOT_ALLOWED_ERROR, (type, txt) => {
+                if (type === AUTH_ERROR_TYPES.ROOM_CREATION_RESTRICTION) {
+                    logger.info('Lobby room creation not allowed, we will retry on main room.');
+                    this.lobbyRoom?.clean();
+
+                    this.lobbyRoom = undefined;
+
+                    this.mainRoom.join();
+                } else {
+                    reject(type, txt);
+                }
+            });
 
             this.lobbyRoom.join();
         });
-
     }
 
     /**
@@ -455,7 +469,12 @@ export default class Lobby {
             this.xmpp.connection.sendIQ(msgToSend,
                 () => { }, // eslint-disable-line no-empty-function
                 e => {
-                    logger.error(`Error sending invite for ${membersToApprove}`, e);
+                    handleStropheError(e, {
+                        membersToApprove,
+                        operation: 'lobby approve members',
+                        roomJid: this.lobbyRoom,
+                        userJid: this.xmpp.connection.jid
+                    });
                 });
         }
     }

@@ -279,6 +279,7 @@ export default class JitsiConference extends Listenable {
     private _videoSenderLimitReached?: boolean;
     private _firefoxP2pEnabled: boolean;
     private _iceRestarts: number;
+    private _zeroMediaRecoveryAttempts: number;
     private _unsubscribers: Array<() => void>;
     private _xmpp: XMPP;
 
@@ -424,6 +425,33 @@ export default class JitsiConference extends Listenable {
                 this.qualityController?.sendVideoController.configureConstraintsForLocalSources();
             });
 
+        // When zero-media zombie state is detected, restart the media session
+        // to recover. This reuses the existing ICE failure recovery path
+        // (Jicofo re-invites with a new session-initiate).
+        // Capped at 3 attempts — if recovery consistently fails, stop thrashing
+        // and let the user or other recovery mechanisms (ICE failed, XMPP ping)
+        // take over. The counter resets when a new session successfully establishes.
+        this.eventEmitter.on(
+            ConnectionQualityEvents.ZERO_MEDIA_DETECTED,
+            () => {
+                const MAX_ZERO_MEDIA_RECOVERY_ATTEMPTS = 3;
+
+                this._zeroMediaRecoveryAttempts++;
+                if (this._zeroMediaRecoveryAttempts > MAX_ZERO_MEDIA_RECOVERY_ATTEMPTS) {
+                    logger.warn('Zero-media zombie detected but recovery attempts exhausted'
+                        + ` (${this._zeroMediaRecoveryAttempts - 1}/${MAX_ZERO_MEDIA_RECOVERY_ATTEMPTS}),`
+                        + ' giving up');
+
+                    return;
+                }
+
+                logger.warn('Zero-media zombie detected, restarting media sessions'
+                    + ` (attempt ${this._zeroMediaRecoveryAttempts}/${MAX_ZERO_MEDIA_RECOVERY_ATTEMPTS})`);
+                Statistics.sendAnalyticsAndLog(
+                    createConferenceEvent('zero.media.recovery', {}));
+                this._restartMediaSessions();
+            });
+
         /**
          * Reports average RTP statistics to the analytics module.
          * @type {AvgRTPStatsReporter}
@@ -529,6 +557,7 @@ export default class JitsiConference extends Listenable {
          * Number of times ICE restarts that have been attempted after ICE connectivity with the JVB was lost.
          */
         this._iceRestarts = 0;
+        this._zeroMediaRecoveryAttempts = 0;
         this._unsubscribers = [];
     }
 
@@ -1133,9 +1162,10 @@ export default class JitsiConference extends Listenable {
      * Resumes media transfer over the JVB connection.
      * @private
      */
-    private _resumeMediaTransferForJvbConnection(): void {
+    private _resumeMediaTransferForJvbConnection(): Promise<void> {
         logger.info('Resuming media transfer over the JVB connection...');
-        this.jvbJingleSession.setMediaTransferActive(true)
+
+        return this.jvbJingleSession.setMediaTransferActive(true)
             .then(() => {
                 logger.info('Resumed media transfer over the JVB connection!');
             })
@@ -1236,7 +1266,7 @@ export default class JitsiConference extends Listenable {
 
         this.p2pJingleSession.invite(localTracks)
             .then(() => {
-                this.p2pJingleSession.addEventListener(MediaSessionEvents.VIDEO_CODEC_CHANGED, () => {
+                this.p2pJingleSession?.addEventListener(MediaSessionEvents.VIDEO_CODEC_CHANGED, () => {
                     this.eventEmitter.emit(JitsiConferenceEvents.VIDEO_CODEC_CHANGED);
                 });
             })
@@ -1391,7 +1421,15 @@ export default class JitsiConference extends Listenable {
         // Swap remote tracks, but only if the P2P has been fully established
         if (wasP2PEstablished) {
             if (this.jvbJingleSession && !requestRestart) {
-                this._resumeMediaTransferForJvbConnection();
+                // Chain _addRemoteJVBTracks onto the media transfer promise to avoid
+                // a race where tracks are added before media transfer is actually enabled.
+                this._resumeMediaTransferForJvbConnection()
+                    .then(() => {
+                        if (this.jvbJingleSession) {
+                            this._addRemoteJVBTracks();
+                        }
+                    })
+                    .catch(err => logger.error('Failed to resume JVB media and add tracks', err));
             }
 
             // Remove remote P2P tracks
@@ -1439,13 +1477,8 @@ export default class JitsiConference extends Listenable {
         // Update P2P status and other affected events/states
         this._setP2PStatus(false);
 
-        if (wasP2PEstablished) {
-            // Add back remote JVB tracks
-            if (this.jvbJingleSession && !requestRestart) {
-                this._addRemoteJVBTracks();
-            } else {
-                logger.info('Not adding remote JVB tracks - no session yet');
-            }
+        if (wasP2PEstablished && (!this.jvbJingleSession || requestRestart)) {
+            logger.info('Not adding remote JVB tracks - no session yet or restart requested');
         }
     }
 
@@ -1955,6 +1988,7 @@ export default class JitsiConference extends Listenable {
         }
 
         if (jingleSession.isP2P === this.isP2PActive()) {
+            this._zeroMediaRecoveryAttempts = 0;
             this.eventEmitter.emit(JitsiConferenceEvents.CONNECTION_ESTABLISHED);
         }
 
@@ -2579,6 +2613,10 @@ export default class JitsiConference extends Listenable {
             );
         }
 
+        if (this.qualityController) {
+            this.qualityController.dispose();
+        }
+
         if (this.rtc) {
             this.rtc.destroy();
         }
@@ -2641,16 +2679,6 @@ export default class JitsiConference extends Listenable {
         this.p2pJingleSession && sessions.push(this.p2pJingleSession);
 
         return sessions;
-    }
-
-    /**
-     * Restarts all active media sessions. Resets the ICE restart counter so
-     * the internal retry mechanism starts fresh after the restart.
-     *
-     * @returns {void}
-     */
-    public restartMediaSessions(): void {
-        this._restartMediaSessions();
     }
 
     /**
@@ -3058,6 +3086,19 @@ export default class JitsiConference extends Listenable {
     }
 
     /**
+     * Restarts the media sessions. Used for recovering from network interface
+     * changes (e.g., WiFi to cellular handoff) without a page reload.
+     * Sends session-terminate with restart flag so Jicofo re-invites with
+     * a new session-initiate.
+     *
+     * @returns {void}
+     */
+    public restartMediaSessions(): void {
+        this._iceRestarts = 0;
+        this._restartMediaSessions();
+    }
+
+    /**
    * Get role of the local user.
    * @returns {string} User role: 'moderator' or 'none'.
    */
@@ -3298,13 +3339,13 @@ export default class JitsiConference extends Listenable {
      * @param identity the member identity, if any
      * @param botType the member botType, if any
      * @param fullJid the member full jid, if any
-     * @param features the member botType, if any
+     * @param features the member features, if any.
      * @param isReplaceParticipant whether this join replaces a participant with
      * the same jwt.
      * @internal
      */
     onMemberJoined(
-            jid: string, nick: string, role: string, isHidden: boolean, statsID: string, status: string, identity: object, botType: string, fullJid: string, features: string, isReplaceParticipant: boolean
+            jid: string, nick: string, role: string, isHidden: boolean, statsID: string, status: string, identity: object, botType: string, fullJid: string, features: Set<string> | undefined, isReplaceParticipant: boolean
     ): void {
         const id = Strophe.getResourceFromJid(jid);
 
@@ -3316,7 +3357,7 @@ export default class JitsiConference extends Listenable {
         participant.setConnectionJid(fullJid);
         participant.setRole(role);
         participant.setBotType(botType);
-        participant.setFeatures(features ? new Set([ features ]) : undefined);
+        participant.setFeatures(features);
         participant.setIsReplacing(isReplaceParticipant);
 
         // Set remote tracks on the participant if source signaling was received before presence.
@@ -4472,7 +4513,14 @@ export default class JitsiConference extends Listenable {
      */
     public joinLobby(displayName: string, email: string): Promise<void> {
         if (this.room) {
-            return this.room.getLobby().join(displayName, email);
+            if (!this.room.getLobby()?.lobbyRoom?.joined) {
+                return this.room.getLobby().join(displayName, email);
+            } else {
+                logger.warn('Already joined the lobby');
+
+                return Promise.resolve();
+            }
+
         }
 
         return Promise.reject(new Error('The conference not started'));

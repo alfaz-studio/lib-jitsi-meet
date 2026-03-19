@@ -26,32 +26,13 @@ export default class E2EEcontext {
      * @param {boolean} [options.sharedKey] - whether there is a uniques key shared amoung all participants.
      */
     constructor({ sharedKey } = {}) {
-        // Determine the URL for the worker script. Relative URLs are relative to
-        // the entry point, not the script that launches the worker.
-        let baseUrl = '';
-        const ljm = document.querySelector('script[src*="lib-jitsi-meet"]');
-
-        if (ljm) {
-            const idx = ljm.src.lastIndexOf('/');
-
-            baseUrl = `${ljm.src.substring(0, idx)}/`;
-        }
-
-        let workerUrl = `${baseUrl}lib-jitsi-meet.e2ee-worker.js`;
-
-        // If there is no baseUrl then we create the worker in a normal way
-        // as you cant load scripts inside blobs from relative paths.
-        // See: https://www.html5rocks.com/en/tutorials/workers/basics/#toc-inlineworkers-loadingscripts
-        if (baseUrl && baseUrl !== '/') {
-            // Initialize the E2EE worker. In order to avoid CORS issues, start the worker and have it
-            // synchronously load the JS.
-            const workerBlob
-                = new Blob([ `importScripts("${workerUrl}");` ], { type: 'application/javascript' });
-
-            workerUrl = window.URL.createObjectURL(workerBlob);
-        }
-
-        this._worker = new Worker(workerUrl, { name: 'E2EE Worker' });
+        this._worker = new Worker(
+            new URL('./Worker.ts', import.meta.url),
+            {
+                name: 'E2EE Worker',
+                type: 'module'
+            }
+        );
 
         this._worker.onerror = e => logger.error(e);
 

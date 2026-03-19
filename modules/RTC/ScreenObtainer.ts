@@ -32,10 +32,11 @@ interface IResolutionConfig {
  * Interface for audio quality configuration.
  */
 interface IAudioQuality {
-    autogainControl?: boolean;
+    autoGainControl?: boolean;
     channelCount?: number;
     echoCancellation?: boolean;
     noiseSuppression?: boolean;
+    restrictOwnAudio?: boolean;
     stereo?: boolean;
 }
 
@@ -69,12 +70,12 @@ interface IAudioConstraints {
         chromeMediaSource?: string;
         chromeMediaSourceId?: string;
     };
-    optional?: {
+    optional?: Array<{
         autoGainControl?: boolean;
         channelCount?: number;
         echoCancellation?: boolean;
         noiseSuppression?: boolean;
-    };
+    }>;
 }
 
 /**
@@ -220,12 +221,40 @@ class ScreenObtainer {
      */
     private _getAudioConstraints(): boolean | IAudioQuality {
         const { audioQuality } = this.options;
-        const audio = audioQuality?.stereo ? {
-            autoGainControl: false,
-            channelCount: 2,
-            echoCancellation: false,
-            noiseSuppression: false
-        } : true;
+        const isTestModeEnabled = this.options.testing?.testMode;
+
+        // Chrome 140+ requires 'restrictOwnAudio' for proper audio sharing when not using stereo.
+        // Starting Chrome 137 'echoCancellation' was turned off by default for screen share audio and needs to be
+        // enabled explicity to avoid echo issues.
+        // See https://issues.chromium.org/issues/422611724 and https://chromestatus.com/feature/5128140732760064 for more details.
+        const supportsRestrictOwnAudio = browser.isChromiumBased()
+            && browser.isEngineVersionGreaterThan(141)
+            && !browser.isElectron();
+        const needsEchoCancellation = !audioQuality?.stereo
+            && browser.isChromiumBased()
+            && browser.isEngineVersionGreaterThan(136)
+            && !supportsRestrictOwnAudio;
+
+        const defaultAudioConstraints: IAudioQuality = {
+            autoGainControl: !audioQuality?.stereo,
+            channelCount: audioQuality?.stereo ? 2 : 1,
+            echoCancellation: !audioQuality?.stereo,
+            noiseSuppression: !audioQuality?.stereo
+        };
+
+        let audio: boolean | IAudioQuality = (audioQuality?.stereo || needsEchoCancellation)
+            ? defaultAudioConstraints
+            : !isTestModeEnabled;
+
+        if (supportsRestrictOwnAudio && !isTestModeEnabled) {
+            if (typeof audio === 'boolean') {
+                audio = {
+                    restrictOwnAudio: true
+                };
+            } else {
+                audio.restrictOwnAudio = true;
+            }
+        }
 
         return audio;
     }
@@ -269,15 +298,6 @@ class ScreenObtainer {
                         let audioConstraints: boolean | IAudioConstraints = false;
 
                         if (screenShareAudio) {
-                            audioConstraints = {};
-                            const optionalConstraints = this._getAudioConstraints();
-
-                            if (typeof optionalConstraints !== 'boolean') {
-                                audioConstraints = {
-                                    optional: optionalConstraints
-                                };
-                            }
-
                             // Audio screen sharing for electron only works for screen type devices.
                             // i.e. when the user shares the whole desktop.
                             // Note. The documentation specifies that chromeMediaSourceId should not be present
@@ -285,10 +305,24 @@ class ScreenObtainer {
                             // at once. However we tested with chromeMediaSourceId present and it seems to be
                             // working properly.
                             if (streamType === 'screen') {
-                                (audioConstraints as IAudioConstraints).mandatory = {
-                                    chromeMediaSource: 'desktop'
+                                audioConstraints = {
+                                    mandatory: {
+                                        chromeMediaSource: 'desktop'
+                                    }
                                 };
+                                const optionalConstraints = this._getAudioConstraints();
+
+                                if (typeof optionalConstraints !== 'boolean') {
+                                    // Chromium requires each element in the legacy optional array to contain
+                                    // exactly one property. A multi-property object causes getUserMedia to
+                                    // throw "Malformed constraints object" (media_constraints_impl.cc).
+                                    (audioConstraints as IAudioConstraints).optional
+                                        = Object.entries(optionalConstraints)
+                                            .map(([ key, value ]) => ({ [key]: value })) as IAudioConstraints['optional'];
+                                }
                             }
+                            // For window/tab sources audioConstraints stays false —
+                            // desktop audio capture is not supported for non-screen sources on Electron.
                         }
 
                         const constraints: any = {

@@ -22,11 +22,12 @@ import { SDPDiffer } from '../sdp/SDPDiffer';
 import SDPUtil from '../sdp/SDPUtil';
 import Statistics from '../statistics/statistics';
 import AsyncQueue, { ClearedQueueError } from '../util/AsyncQueue';
-import { exists, findAll, findFirst, getAttribute, getText } from '../util/XMLUtils';
+import { exists, findAll, findFirst, getAttribute } from '../util/XMLUtils';
 
 import JingleSession from './JingleSession';
 import { JingleSessionState } from './JingleSessionState';
 import { MediaSessionEvents } from './MediaSessionEvents';
+import { handleStropheError } from './StropheErrorHandler';
 import XmppConnection from './XmppConnection';
 
 const logger = getLogger('xmpp:JingleSessionPC');
@@ -49,6 +50,12 @@ const DEFAULT_MAX_STATS: number = 300;
  * @type {number} timeout in ms.
  */
 const ICE_CAND_GATHERING_TIMEOUT: number = 150;
+
+/**
+ * Time in ms to wait in ICE 'disconnected' state before forcing an ICE failure.
+ * Chrome may not transition to 'failed' on its own, leaving media frozen indefinitely.
+ */
+const ICE_DISCONNECTED_TIMEOUT: number = 10000;
 
 /**
  * Reads the endpoint ID given a string which represents either the endpoint's full JID, or the endpoint ID itself.
@@ -176,6 +183,7 @@ export default class JingleSessionPC extends JingleSession {
     private wasConnected: boolean;
     private isReconnect: boolean;
     private wasstable: boolean;
+    private _iceDisconnectedTimeout: ReturnType<typeof setTimeout> | null;
     private webrtcIceUdpDisable: boolean;
     private webrtcIceTcpDisable: boolean;
     private remoteSourceMaxFrameHeights: ISourceFrameHeight[];
@@ -1018,7 +1026,15 @@ export default class JingleSessionPC extends JingleSession {
                 logger.info(`${this} Got RESULT for "session-initiate"`);
             },
             error => {
-                logger.error(`${this} "session-initiate" error`, error);
+                handleStropheError(error, {
+                    isP2P: this.isP2P,
+                    operation: 'session-initiate',
+                    remoteJid: this.remoteJid,
+                    roomJid: this.room?.roomjid,
+                    session: this.toString(),
+                    sid: this.sid,
+                    userJid: this.connection.jid
+                });
             },
             IQ_TIMEOUT);
     }
@@ -1040,7 +1056,6 @@ export default class JingleSessionPC extends JingleSession {
      */
     private newJingleErrorHandler(failureCb?: (error: IJingleError) => void): ErrorCallback {
         return errResponse => {
-
             const error: IJingleError = {
                 code: undefined,
                 msg: undefined,
@@ -1054,16 +1069,10 @@ export default class JingleSessionPC extends JingleSession {
 
                 if (errorElSel) {
                     error.code = getAttribute(errorElSel, 'code');
-                    const errorResponseChildren = errResponse.children;
+                    const errorResponseChildren = errorElSel.children;
 
                     if (errorResponseChildren.length) {
                         error.reason = errorResponseChildren[0].tagName;
-                    }
-
-                    const errorMsgSel = findFirst(errorElSel, ':scope>text');
-
-                    if (errorMsgSel) {
-                        error.msg = getText(errorMsgSel);
                     }
                 }
             }
@@ -1072,20 +1081,25 @@ export default class JingleSessionPC extends JingleSession {
                 error.reason = 'timeout';
             }
 
-            error.session = this.toString();
+            // When remote peer decides to terminate the session, but it still has few messages on the queue for
+            // processing, it will first send us 'session-terminate' (we enter ENDED) and then follow with
+            // 'item-not-found' for the queued requests. These 'item-not-found' errors can be ignored.
+            const ignoreErrors = this.state === JingleSessionState.ENDED && error?.reason === 'item-not-found';
 
-            if (failureCb) {
-                failureCb(error);
-            } else if (this.state === JingleSessionState.ENDED
-                        && error.reason === 'item-not-found') {
-                // When remote peer decides to terminate the session, but it
-                // still have few messages on the queue for processing,
-                // it will first send us 'session-terminate' (we enter ENDED)
-                // and then follow with 'item-not-found' for the queued requests
-                // We don't want to have that logged on error level.
-                logger.debug(`${this} Jingle error: ${JSON.stringify(error)}`);
-            } else {
-                logger.error(`Jingle error: ${JSON.stringify(error)}`);
+            if (!ignoreErrors) {
+                failureCb?.(error);
+
+                // Call handleStropheError for centralized error logging and analytics.
+                handleStropheError(errResponse, {
+                    isP2P: this.isP2P,
+                    operation: 'Jingle IQ',
+                    remoteJid: this.remoteJid,
+                    roomJid: this.room?.roomjid,
+                    session: this.toString(),
+                    sid: this.sid,
+                    state: this.state,
+                    userJid: this.connection.jid
+                });
             }
         };
     }
@@ -1511,6 +1525,11 @@ export default class JingleSessionPC extends JingleSession {
         this.state = JingleSessionState.ENDED;
         this.establishmentDuration = undefined;
 
+        if (this._iceDisconnectedTimeout) {
+            clearTimeout(this._iceDisconnectedTimeout);
+            this._iceDisconnectedTimeout = null;
+        }
+
         if (this.peerconnection) {
             this.peerconnection.onicecandidate = null;
             this.peerconnection.oniceconnectionstatechange = null;
@@ -1558,6 +1577,7 @@ export default class JingleSessionPC extends JingleSession {
          * @type {boolean}
          */
         this.wasstable = false;
+        this._iceDisconnectedTimeout = null;
         this.webrtcIceUdpDisable = Boolean(options.webrtcIceUdpDisable);
         this.webrtcIceTcpDisable = Boolean(options.webrtcIceTcpDisable);
 
@@ -1766,6 +1786,12 @@ export default class JingleSessionPC extends JingleSession {
                         XMPPEvents.CONNECTION_ESTABLISHED, this);
                 }
                 this.isReconnect = false;
+
+                // Clear any pending disconnected timeout — ICE recovered.
+                if (this._iceDisconnectedTimeout) {
+                    clearTimeout(this._iceDisconnectedTimeout);
+                    this._iceDisconnectedTimeout = null;
+                }
                 break;
             case 'disconnected':
                 this.isReconnect = true;
@@ -1776,8 +1802,30 @@ export default class JingleSessionPC extends JingleSession {
                     this.room.eventEmitter.emit(
                         XMPPEvents.CONNECTION_INTERRUPTED, this);
                 }
+
+                // Start a timer to force ICE failed if disconnected state
+                // persists. Chrome may never transition to 'failed' on its
+                // own, leaving media frozen with no recovery.
+                if (!this._iceDisconnectedTimeout && this.wasstable) {
+                    this._iceDisconnectedTimeout = setTimeout(() => {
+                        this._iceDisconnectedTimeout = null;
+                        const currentState = this.peerconnection?.iceConnectionState;
+
+                        if (currentState === 'disconnected') {
+                            logger.warn(`${this} ICE stuck in disconnected for `
+                                + `${ICE_DISCONNECTED_TIMEOUT}ms, forcing ICE failed`);
+                            this.room.eventEmitter.emit(
+                                XMPPEvents.CONNECTION_ICE_FAILED, this);
+                        }
+                    }, ICE_DISCONNECTED_TIMEOUT);
+                }
                 break;
             case 'failed':
+                // Clear disconnected timeout — failed state will handle recovery.
+                if (this._iceDisconnectedTimeout) {
+                    clearTimeout(this._iceDisconnectedTimeout);
+                    this._iceDisconnectedTimeout = null;
+                }
                 this.room.eventEmitter.emit(
                     XMPPEvents.CONNECTION_ICE_FAILED, this);
                 break;
@@ -1802,6 +1850,10 @@ export default class JingleSessionPC extends JingleSession {
                 // https://bugs.chromium.org/p/chromium/issues/detail?id=982793
                 // for details) we use this workaround to recover from lost connections
                 if (icestate === 'disconnected') {
+                    if (this._iceDisconnectedTimeout) {
+                        clearTimeout(this._iceDisconnectedTimeout);
+                        this._iceDisconnectedTimeout = null;
+                    }
                     this.room.eventEmitter.emit(
                         XMPPEvents.CONNECTION_ICE_FAILED, this);
                 }
@@ -2035,7 +2087,7 @@ export default class JingleSessionPC extends JingleSession {
                 // been received before the updated source map is received on the bridge channel.
                 const { muted, videoType } = this._signalingLayer.getPeerMediaInfo(owner, mediaType, source);
 
-                muted && this.peerconnection._sourceMutedChanged(source, muted);
+                typeof muted !== 'undefined' && this.peerconnection._sourceMutedChanged(source, muted);
                 this.room.eventEmitter.emit(JitsiTrackEvents.TRACK_OWNER_SET, track, owner, source, videoType);
             }
         }

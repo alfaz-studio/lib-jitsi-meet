@@ -17,5 +17,12 @@ export enum ConnectionQualityEvents {
      * This suggests the video encoding may be stuck (e.g., due to stale
      * constraints sent during a network interruption).
      */
-    VIDEO_ZERO_MEDIA_DETECTED = 'cq.video_zero_media_detected'
+    VIDEO_ZERO_MEDIA_DETECTED = 'cq.video_zero_media_detected',
+
+    /**
+     * Indicates that media was previously flowing but has been zero for an
+     * extended period while ICE remains connected — a zombie conference state.
+     * Listeners should trigger recovery (e.g. session restart).
+     */
+    ZERO_MEDIA_DETECTED = 'cq.zero_media_detected'
 }
