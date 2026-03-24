@@ -685,10 +685,15 @@ export default class JitsiLocalTrack extends JitsiTrack {
         // Wait for any queued mute/unmute operations to settle before
         // disposing. Otherwise queued callbacks may execute on a
         // partially-disposed track, accessing cleared references.
+        // Timeout after 5s to avoid blocking disposal if the chain is
+        // stuck (e.g., waiting on a GUM timeout).
         try {
-            await this._prevSetMuted;
+            await Promise.race([
+                this._prevSetMuted,
+                new Promise<void>(resolve => setTimeout(resolve, 5000))
+            ]);
         } catch {
-            // Ignore — we just need the chain to settle
+            // Ignore — we just need the chain to settle or time out
         }
 
         // Remove the effect instead of stopping it so that the original stream is restored
