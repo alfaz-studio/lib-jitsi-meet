@@ -993,7 +993,7 @@ export default class JitsiConference extends Listenable {
    * @private
    */
     private async _doReplaceTrack(oldTrack?: JitsiLocalTrack, newTrack?: JitsiLocalTrack): Promise<void> {
-        const sessions: Array<{ name: string; promise: Promise<void> }> = [];
+        const sessions: Array<{ name: string; promise: Promise<void>; }> = [];
 
         if (this.jvbJingleSession) {
             sessions.push({ name: 'JVB', promise: this.jvbJingleSession.replaceTrack(oldTrack, newTrack) });
