@@ -434,8 +434,8 @@ class ScreenObtainer {
             // Bug was fixed in Chrome 116 (commit 536a26d9) — skip the hack on modern browsers and cap at 1080p
             // to avoid encoding overhead on HiDPI/Retina displays.
             if (browser.isEngineVersionGreaterThan(115)) {
-                video.height = { ideal: 1080, max: 1080 };
-                video.width = { ideal: 1920, max: 1920 };
+                video.height = 1080;
+                video.width = 1920;
             } else if (!(desktopSharingFrameRate?.max > SS_DEFAULT_FRAME_RATE)) {
                 video.height = 99999;
                 video.width = 99999;
