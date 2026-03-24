@@ -993,21 +993,33 @@ export default class JitsiConference extends Listenable {
    * @private
    */
     private async _doReplaceTrack(oldTrack?: JitsiLocalTrack, newTrack?: JitsiLocalTrack): Promise<void> {
-        const replaceTrackPromises = [];
+        const sessions: Array<{ name: string; promise: Promise<void> }> = [];
 
         if (this.jvbJingleSession) {
-            replaceTrackPromises.push(this.jvbJingleSession.replaceTrack(oldTrack, newTrack));
+            sessions.push({ name: 'JVB', promise: this.jvbJingleSession.replaceTrack(oldTrack, newTrack) });
         } else {
             logger.info('_doReplaceTrack - no JVB JingleSession');
         }
 
         if (this.p2pJingleSession) {
-            replaceTrackPromises.push(this.p2pJingleSession.replaceTrack(oldTrack, newTrack));
+            sessions.push({ name: 'P2P', promise: this.p2pJingleSession.replaceTrack(oldTrack, newTrack) });
         } else {
             logger.info('_doReplaceTrack - no P2P JingleSession');
         }
 
-        await Promise.all(replaceTrackPromises);
+        // Use allSettled so a failure on one session doesn't abort the other.
+        const results = await Promise.allSettled(sessions.map(s => s.promise));
+        const failures = results
+            .map((r, i) => (r.status === 'rejected' ? sessions[i].name : null))
+            .filter(Boolean);
+
+        if (failures.length > 0) {
+            logger.error(`replaceTrack failed on: ${failures.join(', ')}`);
+
+            if (failures.length === sessions.length) {
+                throw new Error(`replaceTrack failed on all sessions: ${failures.join(', ')}`);
+            }
+        }
     }
 
     /**

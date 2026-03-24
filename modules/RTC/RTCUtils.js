@@ -412,6 +412,11 @@ class RTCUtils extends Listenable {
                             clearTimeout(gumTimeout);
                         }
                         resolve(stream);
+                    } else {
+                        // Stream arrived after timeout — stop all tracks to release
+                        // the device and prevent MediaStream memory leak.
+                        logger.warn('getUserMedia resolved after timeout, stopping leaked stream');
+                        stream.getTracks().forEach(t => t.stop());
                     }
                 })
                 .catch(error => {
