@@ -280,6 +280,7 @@ export default class JitsiConference extends Listenable {
     private _firefoxP2pEnabled: boolean;
     private _iceRestarts: number;
     private _zeroMediaRecoveryAttempts: number;
+    private _lastZeroMediaRecoveryTime: number;
     private _unsubscribers: Array<() => void>;
     private _xmpp: XMPP;
 
@@ -428,6 +429,8 @@ export default class JitsiConference extends Listenable {
                 const MAX_ZERO_MEDIA_RECOVERY_ATTEMPTS = 3;
 
                 this._zeroMediaRecoveryAttempts++;
+                this._lastZeroMediaRecoveryTime = Date.now();
+
                 if (this._zeroMediaRecoveryAttempts > MAX_ZERO_MEDIA_RECOVERY_ATTEMPTS) {
                     logger.warn('Zero-media zombie detected but recovery attempts exhausted'
                         + ` (${this._zeroMediaRecoveryAttempts - 1}/${MAX_ZERO_MEDIA_RECOVERY_ATTEMPTS}),`
@@ -549,6 +552,7 @@ export default class JitsiConference extends Listenable {
          */
         this._iceRestarts = 0;
         this._zeroMediaRecoveryAttempts = 0;
+        this._lastZeroMediaRecoveryTime = 0;
         this._unsubscribers = [];
     }
 
@@ -871,6 +875,12 @@ export default class JitsiConference extends Listenable {
      * @returns {void}
      */
     private _restartMediaSessions(): void {
+        if (!this.room) {
+            logger.warn('Cannot restart media sessions — room is null (conference left)');
+
+            return;
+        }
+
         if (this.p2pJingleSession) {
             this._stopP2PSession({
                 reasonDescription: 'restart',
@@ -1221,6 +1231,12 @@ export default class JitsiConference extends Listenable {
      * @private
      */
     private _startP2PSession(remoteJid: string): void {
+        if (!this.room) {
+            logger.warn('Cannot start P2P session — room is null');
+
+            return;
+        }
+
         this._maybeClearDeferredStartP2P();
         if (this.p2pJingleSession) {
             logger.error('P2P session already started!');
@@ -1292,6 +1308,12 @@ export default class JitsiConference extends Listenable {
      * @private
      */
     private _maybeStartOrStopP2P(userLeftEvent: boolean = false): void {
+        if (!this.room) {
+            logger.debug('Skipping P2P check — room is null');
+
+            return;
+        }
+
         if (!this.isP2PEnabled()
                 || this.isP2PTestModeEnabled()
                 || (browser.isFirefox() && !this._firefoxP2pEnabled)
@@ -1969,7 +1991,16 @@ export default class JitsiConference extends Listenable {
         }
 
         if (jingleSession.isP2P === this.isP2PActive()) {
-            this._zeroMediaRecoveryAttempts = 0;
+            // Only reset zero-media counter after a 60s cooldown to prevent rapid
+            // ICE-reconnect-then-zero-media cycles. Without this, the counter resets
+            // every time ICE reconnects (~100ms), but media may still not flow —
+            // allowing the recovery loop to run indefinitely (87+ events observed).
+            const ZERO_MEDIA_COOLDOWN_MS = 60_000;
+            const timeSinceRecovery = Date.now() - (this._lastZeroMediaRecoveryTime || 0);
+
+            if (timeSinceRecovery > ZERO_MEDIA_COOLDOWN_MS) {
+                this._zeroMediaRecoveryAttempts = 0;
+            }
             this.eventEmitter.emit(JitsiConferenceEvents.CONNECTION_ESTABLISHED);
         }
 
