@@ -1411,19 +1411,24 @@ export default class JitsiConference extends Listenable {
         // Swap remote tracks, but only if the P2P has been fully established
         if (wasP2PEstablished) {
             if (this.jvbJingleSession && !requestRestart) {
-                // Chain _addRemoteJVBTracks onto the media transfer promise to avoid
-                // a race where tracks are added before media transfer is actually enabled.
+                // Capture P2P track references before session termination nulls p2pJingleSession.
+                const p2pRemoteTracks = this.p2pJingleSession.peerconnection.getRemoteTracks();
+
                 this._resumeMediaTransferForJvbConnection()
                     .then(() => {
+                        // Atomic swap in the same microtask to avoid an audio/video gap.
+                        this._removeRemoteTracks('P2P', p2pRemoteTracks);
                         if (this.jvbJingleSession) {
                             this._addRemoteJVBTracks();
                         }
                     })
-                    .catch(err => logger.error('Failed to resume JVB media and add tracks', err));
+                    .catch(err => {
+                        logger.error('Failed to resume JVB media and add tracks', err);
+                        this._removeRemoteTracks('P2P', p2pRemoteTracks);
+                    });
+            } else {
+                this._removeRemoteP2PTracks();
             }
-
-            // Remove remote P2P tracks
-            this._removeRemoteP2PTracks();
         }
 
         // Stop P2P stats
