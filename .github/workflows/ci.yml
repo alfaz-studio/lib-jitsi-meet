@@ -36,6 +36,7 @@ jobs:
           node-version-file: '.nvmrc'
           cache: 'npm'
       - run: npm install
+      - run: npm run gen-version
       - run: npm run lint
 
   test:
@@ -48,6 +49,7 @@ jobs:
           node-version-file: '.nvmrc'
           cache: 'npm'
       - run: npm install
+      - run: npm run gen-version
       - run: npm run test
 
   typedoc:
