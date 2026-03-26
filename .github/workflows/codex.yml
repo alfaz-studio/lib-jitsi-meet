@@ -17,17 +17,18 @@ jobs:
   act:
     name: Act on @codex comments
     if: >-
-      (
-        github.event_name == 'issue_comment' &&
-        contains(github.event.comment.body, '@codex') &&
-        github.event.issue.pull_request &&
-        contains(fromJSON('["MEMBER","OWNER","COLLABORATOR"]'), github.event.comment.author_association)
-      ) || (
-        github.event_name == 'pull_request_review_comment' &&
-        contains(github.event.comment.body, '@codex') &&
-        contains(fromJSON('["MEMBER","OWNER","COLLABORATOR"]'), github.event.comment.author_association)
+      github.actor != 'dependabot[bot]' && (
+        (
+          github.event_name == 'issue_comment' &&
+          contains(github.event.comment.body, '@codex') &&
+          github.event.issue.pull_request &&
+          contains(fromJSON('["MEMBER","OWNER","COLLABORATOR"]'), github.event.comment.author_association)
+        ) || (
+          github.event_name == 'pull_request_review_comment' &&
+          contains(github.event.comment.body, '@codex') &&
+          contains(fromJSON('["MEMBER","OWNER","COLLABORATOR"]'), github.event.comment.author_association)
+        )
       )
-      && github.actor != 'dependabot[bot]'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
