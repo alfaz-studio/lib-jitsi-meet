@@ -227,9 +227,10 @@ class ScreenObtainer {
         // Starting Chrome 137 'echoCancellation' was turned off by default for screen share audio and needs to be
         // enabled explicity to avoid echo issues.
         // See https://issues.chromium.org/issues/422611724 and https://chromestatus.com/feature/5128140732760064 for more details.
+        // Electron 40+ (Chromium 144+) supports restrictOwnAudio via setDisplayMediaRequestHandler,
+        // which excludes the app's own audio from system audio loopback — preventing echo.
         const supportsRestrictOwnAudio = browser.isChromiumBased()
-            && browser.isEngineVersionGreaterThan(141)
-            && !browser.isElectron();
+            && browser.isEngineVersionGreaterThan(141);
         const needsEchoCancellation = !audioQuality?.stereo
             && browser.isChromiumBased()
             && browser.isEngineVersionGreaterThan(136)
