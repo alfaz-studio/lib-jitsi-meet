@@ -1145,8 +1145,8 @@ export default class ChatRoom extends Listenable {
         });
 
         msg.c('retract', {
-            xmlns: 'urn:xmpp:message-retract:sonacove',
-            id: messageId
+            id: messageId,
+            xmlns: 'urn:xmpp:message-retract:sonacove'
         });
 
         this.connection.send(msg);
