@@ -1133,6 +1133,12 @@ export default class ChatRoom extends Listenable {
      * @param messageId - The ID of the message to retract.
      */
     public retractMessage(messageId: string): void {
+        if (!this.connection) {
+            logger.warn('Cannot retract message: no active connection');
+
+            return;
+        }
+
         const msg = $msg({
             to: this.roomjid,
             type: 'groupchat'
