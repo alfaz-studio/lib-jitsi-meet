@@ -1128,6 +1128,24 @@ export default class ChatRoom extends Listenable {
      * @param elementName
      * @param replyToId
      */
+    /**
+     * Sends a message retraction request to the MUC.
+     * @param messageId - The ID of the message to retract.
+     */
+    public retractMessage(messageId: string): void {
+        const msg = $msg({
+            to: this.roomjid,
+            type: 'groupchat'
+        });
+
+        msg.c('retract', {
+            xmlns: 'urn:xmpp:message-retract:sonacove',
+            id: messageId
+        });
+
+        this.connection.send(msg);
+    }
+
     public sendMessage(message: string, elementName: string, replyToId?: string): void {
         const msg = $msg({
             to: this.roomjid,
@@ -1399,20 +1417,6 @@ export default class ChatRoom extends Listenable {
         }
 
 
-        const bodyEl = findFirst(msg, ':scope>body');
-        const txt = bodyEl ? getText(bodyEl) : '';
-        const subject = findFirst(msg, ':scope>subject');
-
-        if (subject) {
-            const subjectText = getText(subject);
-
-            if (subjectText || subjectText === '') {
-                this.subject = subjectText.trim();
-                this.eventEmitter.emit(XMPPEvents.SUBJECT_CHANGED, subjectText);
-                logger.info(`Subject is changed to ${subjectText}`);
-            }
-        }
-
         // xep-0203 delay
         const delayEl = findFirst(msg, ':scope>delay');
         let stamp = getAttribute(delayEl, 'stamp');
@@ -1428,6 +1432,39 @@ export default class ChatRoom extends Listenable {
                     = stamp.match(/(\d{4})(\d{2})(\d{2}T\d{2}:\d{2}:\d{2})/);
 
                 stamp = `${dateParts[1]}-${dateParts[2]}-${dateParts[3]}Z`;
+            }
+        }
+
+        // Check for message retraction
+        const retractedEl = findFirst(msg, ':scope>retracted[*|xmlns="urn:xmpp:message-retract:sonacove"]');
+        const isRetracted = Boolean(retractedEl);
+
+        // For live retraction broadcasts (no <body>, only <retracted>), intercept and emit retraction event.
+        // For history retracted messages (have both <body> and <retracted>), let them fall through to
+        // normal MESSAGE_RECEIVED processing for proper display name resolution.
+        if (isRetracted && !findFirst(msg, ':scope>body')) {
+            const retractedMsgId = getAttribute(retractedEl, 'id');
+            const retractedBy = getAttribute(retractedEl, 'by') || '';
+
+            if (retractedMsgId) {
+                this.eventEmitter.emit(
+                    XMPPEvents.MESSAGE_RETRACTED, retractedMsgId, retractedBy, stamp, from, '', '');
+            }
+
+            return true;
+        }
+
+        const bodyEl = findFirst(msg, ':scope>body');
+        const txt = bodyEl ? getText(bodyEl) : '';
+        const subject = findFirst(msg, ':scope>subject');
+
+        if (subject) {
+            const subjectText = getText(subject);
+
+            if (subjectText || subjectText === '') {
+                this.subject = subjectText.trim();
+                this.eventEmitter.emit(XMPPEvents.SUBJECT_CHANGED, subjectText);
+                logger.info(`Subject is changed to ${subjectText}`);
             }
         }
 
@@ -1508,7 +1545,8 @@ export default class ChatRoom extends Listenable {
                 // we will fire explicitly that this is a visitor(isVisitor:true) to the conference
                 // a message with explicit name set
                 this.eventEmitter.emit(XMPPEvents.MESSAGE_RECEIVED,
-                    from, txt, this.myroomjid, stamp, displayName, isVisitorMessage, messageId, source, replyToId);
+                    from, txt, this.myroomjid, stamp, displayName, isVisitorMessage, messageId, source, replyToId,
+                    isRetracted);
             }
         }
     }
