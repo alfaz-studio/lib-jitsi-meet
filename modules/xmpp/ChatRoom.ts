@@ -1128,6 +1128,29 @@ export default class ChatRoom extends Listenable {
      * @param elementName
      * @param replyToId
      */
+    public sendMessage(message: string, elementName: string, replyToId?: string): void {
+        const msg = $msg({
+            to: this.roomjid,
+            type: 'groupchat'
+        });
+
+        // We are adding the message in a packet extension. If this element
+        // is different from 'body', we add a custom namespace.
+        // e.g. for 'json-message' extension of message stanza.
+        if (elementName === 'body') {
+            msg.c(elementName, {}, message);
+        } else {
+            msg.c(elementName, { xmlns: 'http://jitsi.org/jitmeet' }, message);
+        }
+
+        if (replyToId) {
+            msg.up().c('reply', { to: replyToId });
+        }
+
+        this.connection.send(msg);
+        this.eventEmitter.emit(XMPPEvents.SENDING_CHAT_MESSAGE, message);
+    }
+
     /**
      * Sends a message retraction request to the MUC.
      * @param messageId - The ID of the message to retract.
@@ -1150,29 +1173,6 @@ export default class ChatRoom extends Listenable {
         });
 
         this.connection.send(msg);
-    }
-
-    public sendMessage(message: string, elementName: string, replyToId?: string): void {
-        const msg = $msg({
-            to: this.roomjid,
-            type: 'groupchat'
-        });
-
-        // We are adding the message in a packet extension. If this element
-        // is different from 'body', we add a custom namespace.
-        // e.g. for 'json-message' extension of message stanza.
-        if (elementName === 'body') {
-            msg.c(elementName, {}, message);
-        } else {
-            msg.c(elementName, { xmlns: 'http://jitsi.org/jitmeet' }, message);
-        }
-
-        if (replyToId) {
-            msg.up().c('reply', { to: replyToId });
-        }
-
-        this.connection.send(msg);
-        this.eventEmitter.emit(XMPPEvents.SENDING_CHAT_MESSAGE, message);
     }
 
     /**
@@ -1454,7 +1454,9 @@ export default class ChatRoom extends Listenable {
 
             if (retractedMsgId) {
                 this.eventEmitter.emit(
-                    XMPPEvents.MESSAGE_RETRACTED, retractedMsgId, retractedBy, stamp, from, '', '');
+                    XMPPEvents.MESSAGE_RETRACTED, retractedMsgId, retractedBy, stamp, from, undefined, undefined);
+            } else {
+                logger.warn('Received retraction stanza without an id attribute, ignoring.');
             }
 
             return true;

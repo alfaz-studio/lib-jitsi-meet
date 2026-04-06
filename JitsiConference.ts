@@ -2816,9 +2816,9 @@ export default class JitsiConference extends Listenable {
     }
 
     /**
-   * Sends a message retraction request.
-   * @param {string} messageId - The ID of the message to retract.
-   */
+     * Sends a message retraction request.
+     * @param {string} messageId - The ID of the message to retract.
+     */
     public retractMessage(messageId: string): void {
         if (this.room) {
             this.room.retractMessage(messageId);
