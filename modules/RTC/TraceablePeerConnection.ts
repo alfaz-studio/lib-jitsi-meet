@@ -157,7 +157,6 @@ export default class TraceablePeerConnection {
     private _pcId: string;
     private _remoteUfrag: string;
     private _signalingLayer: SignalingLayer;
-    private _pendingMuteUpdates: Map<string, boolean>;
     /**
      * @internal
      */
@@ -324,13 +323,6 @@ export default class TraceablePeerConnection {
          * @type {Map<string, Map<MediaType, Set<JitsiRemoteTrack>>>}
          */
         this.remoteTracks = new Map();
-
-        /**
-         * Stores pending mute updates for sources that haven't had tracks created yet.
-         * @type {Map<string, boolean>}
-         * @private
-         */
-        this._pendingMuteUpdates = new Map();
 
         /**
          * A map which stores local tracks mapped by {@link JitsiLocalTrack.rtcId}
@@ -1211,14 +1203,11 @@ export default class TraceablePeerConnection {
         const track = this.getRemoteTracks().slice().reverse().find(t => t.getSourceName() === sourceName);
 
         if (!track) {
-            // Store the pending mute update to be applied when the track is created
-            this._pendingMuteUpdates.set(sourceName, isMuted);
+            logger.debug(`Remote track not found for source=${sourceName}, mute update failed!`);
 
             return;
         }
 
-        // Clear any pending mute update since we're applying the current state to an existing track
-        this._pendingMuteUpdates.delete(sourceName);
         track.setMute(isMuted);
     }
 
@@ -1703,14 +1692,6 @@ export default class TraceablePeerConnection {
             userTracksByMediaType.add(remoteTrack);
         }
 
-        // Store pending mute update on the track itself so JitsiConference can apply it after attaching listeners
-        if (this._pendingMuteUpdates.has(sourceName)) {
-            const pendingMutedState = this._pendingMuteUpdates.get(sourceName);
-
-            remoteTrack._setPendingMuteState(pendingMutedState);
-            this._pendingMuteUpdates.delete(sourceName);
-        }
-
         this.eventEmitter.emit(RTCEvents.REMOTE_TRACK_ADDED, remoteTrack, this);
     }
 
@@ -1812,8 +1793,15 @@ export default class TraceablePeerConnection {
             const trackIndex = getSourceIndexFromSourceName(sourceName);
             const mediaType = localTrack.getType();
             const mLines = media.filter(m => m.type === mediaType);
-            const ssrcGroups = mLines[trackIndex].ssrcGroups;
-            let ssrcs = mLines[trackIndex].ssrcs;
+            const mLine = mLines[trackIndex];
+
+            if (!mLine) {
+                logger.warn(`${this} No mLine for ${sourceName} at index ${trackIndex}, skipping`);
+                continue;
+            }
+
+            const ssrcGroups = mLine.ssrcGroups;
+            let ssrcs = mLine.ssrcs;
 
             if (ssrcs?.length) {
                 // Filter the ssrcs with 'cname' attribute.
@@ -2306,6 +2294,13 @@ export default class TraceablePeerConnection {
                                 && t.direction !== MediaDirection.RECVONLY)[trackIndex];
                 }
             }
+        }
+
+        // Fallback: when oldTrack is null (stale track replaced with null upstream)
+        // and no transceiver was found via source-based lookup, try finding one by media type.
+        if (!transceiver && !oldTrack && newTrack) {
+            transceiver = this.peerconnection.getTransceivers()
+                .find(t => t.receiver.track.kind === mediaType && t.direction !== MediaDirection.RECVONLY);
         }
 
         if (!transceiver) {

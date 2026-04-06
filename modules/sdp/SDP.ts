@@ -230,6 +230,14 @@ export default class SDP {
             });
         }
 
+        // Check if any fingerprint has cryptex attribute and add session-level a=cryptex
+        const allFingerprints = findAll(jingle, `:scope>content>transport[*|xmlns='${XEP.ICE_UDP_TRANSPORT}']>fingerprint[*|xmlns='${XEP.DTLS_SRTP}']`);
+        const hasCryptex = allFingerprints.some(fp => getAttribute(fp, 'cryptex') === 'true');
+
+        if (hasCryptex) {
+            this.raw += 'a=cryptex\r\n';
+        }
+
         this.session = this.raw;
 
         findAll(jingle, ':scope>content').forEach(content => {
@@ -513,8 +521,11 @@ export default class SDP {
                     sdp += parameters
                         .map(parameter => {
                             const name = getAttribute(parameter, 'name');
+                            const value = getAttribute(parameter, 'value');
 
-                            return (name ? `${name}=` : '') + getAttribute(parameter, 'value');
+                            // When name === value, this is a non-key=value fmtp format
+                            // (e.g. RED "111/111", DTMF "0-15") — output raw value only.
+                            return (name && name !== value ? `${name}=` : '') + value;
                         })
                         .join(';');
                     sdp += '\r\n';
@@ -993,6 +1004,7 @@ export default class SDP {
         }
 
         const fingerprints = SDPUtil.findLines(this.media[mediaIndex], 'a=fingerprint:', this.session);
+        const hasCryptex = SDPUtil.findLine(this.media[mediaIndex], 'a=cryptex', this.session);
 
         fingerprints.forEach(line => {
             const fingerprint = SDPUtil.parseFingerprint(line);
@@ -1007,6 +1019,12 @@ export default class SDP {
             if (setupLine && typeof setupLine === 'string') {
                 fingerprint.setup = setupLine.substr(8);
             }
+
+            // Add cryptex attribute if a=cryptex is present in session or media section
+            if (hasCryptex) {
+                fingerprint.cryptex = 'true';
+            }
+
             elem.attrs(fingerprint);
             elem.up(); // end of fingerprint
         });

@@ -50,6 +50,7 @@ describe('QualityController', () => {
             data.add(sourceStats);
             qualityController._encodeTimeStats.set(localTrack.rtcId, data);
             jasmine.clock().install();
+            jasmine.clock().mockDate();
             spyOn(qualityController.receiveVideoController, 'setLastN');
         });
 
@@ -77,7 +78,9 @@ describe('QualityController', () => {
             qualityController.receiveVideoController._lastN = 3;
 
             // If the stats indicate that the cpu limitation ceases to exist, the lastN value will be incremented by 1
-            // if the stats continue to look good for the next 60 secs.
+            // if the stats continue to look good for the next 60 secs. First, advance past the ramp-up unblock
+            // timeout (120s) so the block set during cpu limitation is cleared.
+            await nextTick(121000);
             updatedStats = {
                 avgEncodeTime: 8,
                 codec: 'VP8',
@@ -131,7 +134,7 @@ describe('QualityController', () => {
             qualityController._performQualityOptimizations(updatedStats);
 
             // Check that further ramp ups are blocked and lastN value is dropped to 3.
-            expect(qualityController._isLastNRampupBlocked).toBeTrue();
+            expect(qualityController._lastNRampupBlockedAt).not.toBeNull();
             expect(qualityController.receiveVideoController.setLastN).toHaveBeenCalledWith(3);
             rtc.forwardedSources = [ 'v1', 'v2', 'v3' ];
             qualityController.receiveVideoController._lastN = 3;
