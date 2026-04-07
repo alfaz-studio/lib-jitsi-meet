@@ -87,7 +87,7 @@ export default class Polls {
         }
 
         this._mainRoom.sendPrivateMessage(
-            this._xmpp.pollsComponentAddress,
+            this._xmpp.pollsComponentAddress!,
             JSON.stringify({
                 answers,
                 command: COMMAND_NEW_POLL,
@@ -111,7 +111,7 @@ export default class Polls {
         }
 
         this._mainRoom.sendPrivateMessage(
-            this._xmpp.pollsComponentAddress,
+            this._xmpp.pollsComponentAddress!,
             JSON.stringify({
                 command: COMMAND_DELETE_POLL,
                 pollId,
@@ -133,7 +133,7 @@ export default class Polls {
         }
 
         this._mainRoom.sendPrivateMessage(
-            this._xmpp.pollsComponentAddress,
+            this._xmpp.pollsComponentAddress!,
             JSON.stringify({
                 answers,
                 command: COMMAND_ANSWER_POLL,
