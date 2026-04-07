@@ -344,7 +344,7 @@ export enum JitsiConferenceEvents {
     PHONE_NUMBER_CHANGED = 'conference.phoneNumberChanged',
 
     /**
-     * An answer for a pool was received.
+     * An answer for a poll was received.
      */
     POLL_ANSWER_RECEIVED = 'conference.pollAnswerReceived',
 

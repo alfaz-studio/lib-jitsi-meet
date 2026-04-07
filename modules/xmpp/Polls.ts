@@ -44,15 +44,20 @@ export default class Polls {
     /**
      * Creates and sends a new poll.
      *
-     * @param pollId
-     * @param question
-     * @param answers
+     * @param pollId - The unique poll identifier.
+     * @param question - The poll question.
+     * @param answers - The poll answer options.
+     * @param multipleSelection - Whether voters can select multiple answers.
      */
     createPoll(pollId: string, question: string, answers: Array<{ name: string; }>, multipleSelection = false) {
+        if (!this.isSupported()) {
+            return;
+        }
+
         this._mainRoom.sendPrivateMessage(
             this._xmpp.pollsComponentAddress,
             JSON.stringify({
-                answers: answers,
+                answers,
                 command: COMMAND_NEW_POLL,
                 multipleSelection,
                 pollId,
@@ -66,9 +71,13 @@ export default class Polls {
     /**
      * Deletes a poll.
      *
-     * @param pollId
+     * @param pollId - The unique poll identifier.
      */
     deletePoll(pollId: string) {
+        if (!this.isSupported()) {
+            return;
+        }
+
         this._mainRoom.sendPrivateMessage(
             this._xmpp.pollsComponentAddress,
             JSON.stringify({
@@ -102,9 +111,9 @@ export default class Polls {
     /**
      * Handles a message for polls.
      *
-     * @param {object} payload - Arbitrary data.
+     * @param payload - The polls message payload.
      */
-    _handleMessages(payload) {
+    _handleMessages(payload: { command: string; polls?: Array<Record<string, unknown>>; [key: string]: unknown }) {
         switch (payload.command) {
         case COMMAND_NEW_POLL:
             this._mainRoom.eventEmitter.emit(XMPPEvents.POLLS_RECEIVE_EVENT, payload);
