@@ -117,14 +117,15 @@ export default class Polls {
      *
      * @param payload - The polls message payload.
      */
-    _handleMessages(payload: { [key: string]: unknown; command: string; polls?: Array<Record<string, unknown>>; }) {
+    private _handleMessages(payload: { [key: string]: unknown; command: string; polls?: Array<Record<string, unknown>>; }) {
         switch (payload.command) {
-        case COMMAND_NEW_POLL:
+        case COMMAND_NEW_POLL: {
             this._mainRoom.eventEmitter.emit(XMPPEvents.POLLS_RECEIVE_EVENT, payload);
 
             break;
+        }
         case COMMAND_OLD_POLLS: {
-            payload?.polls?.forEach((poll: any) => {
+            payload?.polls?.forEach((poll: Record<string, unknown>) => {
                 this._mainRoom.eventEmitter.emit(XMPPEvents.POLLS_RECEIVE_EVENT, {
                     history: true,
                     ...poll
