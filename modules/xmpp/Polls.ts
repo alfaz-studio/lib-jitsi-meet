@@ -26,6 +26,38 @@ export default class Polls {
     }
 
     /**
+     * Handles a message for polls.
+     *
+     * @param payload - The polls message payload.
+     */
+    private _handleMessages(payload: { [key: string]: unknown; command: string; polls?: Array<Record<string, unknown>>; }) {
+        switch (payload.command) {
+        case COMMAND_NEW_POLL: {
+            this._mainRoom.eventEmitter.emit(XMPPEvents.POLLS_RECEIVE_EVENT, payload);
+
+            break;
+        }
+        case COMMAND_OLD_POLLS: {
+            payload?.polls?.forEach((poll: Record<string, unknown>) => {
+                this._mainRoom.eventEmitter.emit(XMPPEvents.POLLS_RECEIVE_EVENT, {
+                    history: true,
+                    ...poll
+                });
+            });
+            break;
+        }
+        case COMMAND_ANSWER_POLL: {
+            this._mainRoom.eventEmitter.emit(XMPPEvents.POLLS_ANSWER_EVENT, payload);
+            break;
+        }
+        case COMMAND_DELETE_POLL: {
+            this._mainRoom.eventEmitter.emit(XMPPEvents.POLLS_DELETE_EVENT, payload);
+            break;
+        }
+        }
+    }
+
+    /**
      * Whether polls is supported on backend.
      *
      * @returns {boolean} whether polls is supported on backend.
@@ -110,37 +142,5 @@ export default class Polls {
             }),
             'json-message',
             true);
-    }
-
-    /**
-     * Handles a message for polls.
-     *
-     * @param payload - The polls message payload.
-     */
-    private _handleMessages(payload: { [key: string]: unknown; command: string; polls?: Array<Record<string, unknown>>; }) {
-        switch (payload.command) {
-        case COMMAND_NEW_POLL: {
-            this._mainRoom.eventEmitter.emit(XMPPEvents.POLLS_RECEIVE_EVENT, payload);
-
-            break;
-        }
-        case COMMAND_OLD_POLLS: {
-            payload?.polls?.forEach((poll: Record<string, unknown>) => {
-                this._mainRoom.eventEmitter.emit(XMPPEvents.POLLS_RECEIVE_EVENT, {
-                    history: true,
-                    ...poll
-                });
-            });
-            break;
-        }
-        case COMMAND_ANSWER_POLL: {
-            this._mainRoom.eventEmitter.emit(XMPPEvents.POLLS_ANSWER_EVENT, payload);
-            break;
-        }
-        case COMMAND_DELETE_POLL: {
-            this._mainRoom.eventEmitter.emit(XMPPEvents.POLLS_DELETE_EVENT, payload);
-            break;
-        }
-        }
     }
 }
