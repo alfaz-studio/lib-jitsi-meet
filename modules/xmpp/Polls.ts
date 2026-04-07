@@ -92,10 +92,14 @@ export default class Polls {
     /**
      * Sends answers for a poll.
      *
-     * @param pollId
-     * @param answers
+     * @param pollId - The unique poll identifier.
+     * @param answers - Array of boolean values for each answer option.
      */
     answerPoll(pollId: string, answers: Array<boolean>) {
+        if (!this.isSupported()) {
+            return;
+        }
+
         this._mainRoom.sendPrivateMessage(
             this._xmpp.pollsComponentAddress,
             JSON.stringify({
@@ -113,7 +117,7 @@ export default class Polls {
      *
      * @param payload - The polls message payload.
      */
-    _handleMessages(payload: { command: string; polls?: Array<Record<string, unknown>>; [key: string]: unknown }) {
+    _handleMessages(payload: { [key: string]: unknown; command: string; polls?: Array<Record<string, unknown>>; }) {
         switch (payload.command) {
         case COMMAND_NEW_POLL:
             this._mainRoom.eventEmitter.emit(XMPPEvents.POLLS_RECEIVE_EVENT, payload);
