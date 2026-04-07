@@ -349,6 +349,11 @@ export enum JitsiConferenceEvents {
     POLL_ANSWER_RECEIVED = 'conference.pollAnswerReceived',
 
     /**
+     * A poll was deleted.
+     */
+    POLL_DELETED = 'conference.pollDeleted',
+
+    /**
      * A new poll was received or a poll is loaded from the history.
      */
     POLL_RECEIVED = 'conference.pollReceived',

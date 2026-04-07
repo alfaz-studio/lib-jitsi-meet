@@ -4,6 +4,7 @@ import ChatRoom from './ChatRoom';
 import XMPP from './xmpp';
 
 export const COMMAND_ANSWER_POLL = 'answer-poll';
+export const COMMAND_DELETE_POLL = 'delete-poll';
 export const COMMAND_NEW_POLL = 'new-poll';
 export const COMMAND_OLD_POLLS = 'old-polls';
 
@@ -63,6 +64,23 @@ export default class Polls {
     }
 
     /**
+     * Deletes a poll.
+     *
+     * @param pollId
+     */
+    deletePoll(pollId: string) {
+        this._mainRoom.sendPrivateMessage(
+            this._xmpp.pollsComponentAddress,
+            JSON.stringify({
+                command: COMMAND_DELETE_POLL,
+                pollId,
+                type: 'polls'
+            }),
+            'json-message',
+            true);
+    }
+
+    /**
      * Sends answers for a poll.
      *
      * @param pollId
@@ -103,6 +121,10 @@ export default class Polls {
         }
         case COMMAND_ANSWER_POLL: {
             this._mainRoom.eventEmitter.emit(XMPPEvents.POLLS_ANSWER_EVENT, payload);
+            break;
+        }
+        case COMMAND_DELETE_POLL: {
+            this._mainRoom.eventEmitter.emit(XMPPEvents.POLLS_DELETE_EVENT, payload);
             break;
         }
         }
