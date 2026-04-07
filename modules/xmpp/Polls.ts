@@ -47,12 +47,13 @@ export default class Polls {
      * @param question
      * @param answers
      */
-    createPoll(pollId: string, question: string, answers: Array<{ name: string; }>) {
+    createPoll(pollId: string, question: string, answers: Array<{ name: string; }>, multipleSelection = false) {
         this._mainRoom.sendPrivateMessage(
             this._xmpp.pollsComponentAddress,
             JSON.stringify({
                 answers: answers,
                 command: COMMAND_NEW_POLL,
+                multipleSelection,
                 pollId,
                 question,
                 type: 'polls'
