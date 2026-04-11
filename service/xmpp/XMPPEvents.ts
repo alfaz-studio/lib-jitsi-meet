@@ -200,6 +200,9 @@ export enum XMPPEvents {
     // received.
     MESSAGE_RECEIVED = 'xmpp.message_received',
 
+    // Designates an event indicating that a message retraction was received.
+    MESSAGE_RETRACTED = 'xmpp.message_retracted',
+
     // Designates an event indicating that a participant was denied access to a conference from the lobby XMPP MUC.
     MUC_DENIED_ACCESS = 'xmpp.muc_denied access',
 
@@ -285,6 +288,11 @@ export enum XMPPEvents {
      * Event fired when we receive an answer for a poll.
      */
     POLLS_ANSWER_EVENT = 'xmpp.polls.answer.event',
+
+    /**
+     * Event fired when a poll is deleted.
+     */
+    POLLS_DELETE_EVENT = 'xmpp.polls.delete.event',
 
     /**
      * Event fired when we receive a message for polls.

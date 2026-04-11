@@ -822,7 +822,8 @@ describe('ChatRoom', () => {
                 true, // isVisitorMessage
                 'msg126', // messageId
                 undefined, // source (null for visitor messages)
-                null); // replyToId
+                null, // replyToId
+                false); // isRetracted
         });
 
         it('parses group message with display-name extension source=token correctly', () => {
@@ -845,7 +846,8 @@ describe('ChatRoom', () => {
                 false, // isVisitorMessage
                 'msg127', // messageId
                 'token', // source
-                null); // replyToId
+                null, // replyToId
+                false); // isRetracted
         });
 
         it('parses group message with display-name extension source=guest correctly', () => {
@@ -868,7 +870,8 @@ describe('ChatRoom', () => {
                 false, // isVisitorMessage
                 'msg127b', // messageId
                 'guest', // source
-                null); // replyToId
+                null, // replyToId
+                false); // isRetracted
         });
 
         it('parses group message with display-name extension from non-visitor correctly', () => {
@@ -891,7 +894,8 @@ describe('ChatRoom', () => {
                 false, // isVisitorMessage
                 'msg127c', // messageId
                 'jitsi-meet', // source
-                null); // replyToId
+                null, // replyToId
+                false); // isRetracted
         });
 
         it('parses group message without display-name extension correctly', () => {
@@ -913,7 +917,8 @@ describe('ChatRoom', () => {
                 false, // isVisitorMessage
                 'msg128', // messageId
                 undefined, // source (undefined when no display-name element)
-                null); // replyToId
+                null, // replyToId
+                false); // isRetracted
         });
         it('parses group message with XEP-0461 reply element correctly', () => {
         const msgStr = '' +

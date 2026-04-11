@@ -844,6 +844,13 @@ export default class JitsiConference extends Listenable {
      * @returns {void}
      */
     private _restartMediaSessions(): void {
+        this._iceRestarts = 0;
+        if (!this.room) {
+            logger.warn('Cannot restart media sessions — room is null (conference left)');
+
+            return;
+        }
+
         if (this.p2pJingleSession) {
             this._stopP2PSession({
                 reasonDescription: 'restart',
@@ -956,21 +963,33 @@ export default class JitsiConference extends Listenable {
    * @private
    */
     private async _doReplaceTrack(oldTrack?: JitsiLocalTrack, newTrack?: JitsiLocalTrack): Promise<void> {
-        const replaceTrackPromises = [];
+        const sessions: Array<{ name: string; promise: Promise<void>; }> = [];
 
         if (this.jvbJingleSession) {
-            replaceTrackPromises.push(this.jvbJingleSession.replaceTrack(oldTrack, newTrack));
+            sessions.push({ name: 'JVB', promise: this.jvbJingleSession.replaceTrack(oldTrack, newTrack) });
         } else {
             logger.info('_doReplaceTrack - no JVB JingleSession');
         }
 
         if (this.p2pJingleSession) {
-            replaceTrackPromises.push(this.p2pJingleSession.replaceTrack(oldTrack, newTrack));
+            sessions.push({ name: 'P2P', promise: this.p2pJingleSession.replaceTrack(oldTrack, newTrack) });
         } else {
             logger.info('_doReplaceTrack - no P2P JingleSession');
         }
 
-        await Promise.all(replaceTrackPromises);
+        // Use allSettled so a failure on one session doesn't abort the other.
+        const results = await Promise.allSettled(sessions.map(s => s.promise));
+        const failures = results
+            .map((r, i) => (r.status === 'rejected' ? sessions[i].name : null))
+            .filter(Boolean);
+
+        if (failures.length > 0) {
+            logger.error(`replaceTrack failed on: ${failures.join(', ')}`);
+
+            if (failures.length === sessions.length) {
+                throw new Error(`replaceTrack failed on all sessions: ${failures.join(', ')}`);
+            }
+        }
     }
 
     /**
@@ -1124,9 +1143,10 @@ export default class JitsiConference extends Listenable {
      * Resumes media transfer over the JVB connection.
      * @private
      */
-    private _resumeMediaTransferForJvbConnection(): void {
+    private _resumeMediaTransferForJvbConnection(): Promise<void> {
         logger.info('Resuming media transfer over the JVB connection...');
-        this.jvbJingleSession.setMediaTransferActive(true)
+
+        return this.jvbJingleSession.setMediaTransferActive(true)
             .then(() => {
                 logger.info('Resumed media transfer over the JVB connection!');
             })
@@ -1193,6 +1213,12 @@ export default class JitsiConference extends Listenable {
      * @private
      */
     private _startP2PSession(remoteJid: string): void {
+        if (!this.room) {
+            logger.warn('Cannot start P2P session — room is null');
+
+            return;
+        }
+
         this._maybeClearDeferredStartP2P();
         if (this.p2pJingleSession) {
             logger.error('P2P session already started!');
@@ -1264,6 +1290,12 @@ export default class JitsiConference extends Listenable {
      * @private
      */
     private _maybeStartOrStopP2P(userLeftEvent: boolean = false): void {
+        if (!this.room) {
+            logger.debug('Skipping P2P check — room is null');
+
+            return;
+        }
+
         if (!this.isP2PEnabled()
                 || this.isP2PTestModeEnabled()
                 || (browser.isFirefox() && !this._firefoxP2pEnabled)
@@ -1382,11 +1414,24 @@ export default class JitsiConference extends Listenable {
         // Swap remote tracks, but only if the P2P has been fully established
         if (wasP2PEstablished) {
             if (this.jvbJingleSession && !requestRestart) {
-                this._resumeMediaTransferForJvbConnection();
-            }
+                // Capture P2P track references before session termination nulls p2pJingleSession.
+                const p2pRemoteTracks = this.p2pJingleSession.peerconnection.getRemoteTracks();
 
-            // Remove remote P2P tracks
-            this._removeRemoteP2PTracks();
+                this._resumeMediaTransferForJvbConnection()
+                    .then(() => {
+                        // Atomic swap in the same microtask to avoid an audio/video gap.
+                        this._removeRemoteTracks('P2P', p2pRemoteTracks);
+                        if (this.jvbJingleSession) {
+                            this._addRemoteJVBTracks();
+                        }
+                    })
+                    .catch(err => {
+                        logger.error('Failed to resume JVB media and add tracks', err);
+                        this._removeRemoteTracks('P2P', p2pRemoteTracks);
+                    });
+            } else {
+                this._removeRemoteP2PTracks();
+            }
         }
 
         // Stop P2P stats
@@ -1430,13 +1475,8 @@ export default class JitsiConference extends Listenable {
         // Update P2P status and other affected events/states
         this._setP2PStatus(false);
 
-        if (wasP2PEstablished) {
-            // Add back remote JVB tracks
-            if (this.jvbJingleSession && !requestRestart) {
-                this._addRemoteJVBTracks();
-            } else {
-                logger.info('Not adding remote JVB tracks - no session yet');
-            }
+        if (wasP2PEstablished && (!this.jvbJingleSession || requestRestart)) {
+            logger.info('Not adding remote JVB tracks - no session yet or restart requested');
         }
     }
 
@@ -1830,6 +1870,14 @@ export default class JitsiConference extends Listenable {
         if (session.isP2P === this.isP2PActive()) {
             this.eventEmitter.emit(JitsiConferenceEvents.CONNECTION_RESTORED);
         }
+
+        // Resend receiver constraints after ICE recovery to correct any stale
+        // constraints (e.g., maxHeight:0) that were sent during the interruption.
+        this.qualityController?.receiveVideoController.resendCurrentConstraints();
+
+        // Reconfigure sender constraints to ensure the sender re-applies its
+        // current constraint state after the connection is restored.
+        this.qualityController?.sendVideoController.configureConstraintsForLocalSources();
     }
 
     /**
@@ -2652,6 +2700,17 @@ export default class JitsiConference extends Listenable {
     }
 
     /**
+     * Force-resends the current receiver video constraints to both the bridge
+     * channel and P2P peer, bypassing the equality check. Used to correct
+     * stale constraints (e.g., maxHeight:0) sent during a network interruption.
+     *
+     * @returns {void}
+     */
+    public resendReceiverConstraints(): void {
+        this.qualityController?.receiveVideoController.resendCurrentConstraints();
+    }
+
+    /**
    * Returns name of this conference.
    * @returns {string}
    */
@@ -2777,6 +2836,16 @@ export default class JitsiConference extends Listenable {
     public sendReaction(reaction: string, messageId: string, receiverId: string): void {
         if (this.room) {
             this.room.sendReaction(reaction, messageId, receiverId);
+        }
+    }
+
+    /**
+     * Sends a message retraction request.
+     * @param {string} messageId - The ID of the message to retract.
+     */
+    public retractMessage(messageId: string): void {
+        if (this.room) {
+            this.room.retractMessage(messageId);
         }
     }
 
@@ -3045,6 +3114,18 @@ export default class JitsiConference extends Listenable {
     }
 
     /**
+     * Restarts the media sessions. Used for recovering from network interface
+     * changes (e.g., WiFi to cellular handoff) without a page reload.
+     * Sends session-terminate with restart flag so Jicofo re-invites with
+     * a new session-initiate.
+     *
+     * @returns {void}
+     */
+    public restartMediaSessions(): void {
+        this._restartMediaSessions();
+    }
+
+    /**
    * Get role of the local user.
    * @returns {string} User role: 'moderator' or 'none'.
    */
@@ -3203,7 +3284,7 @@ export default class JitsiConference extends Listenable {
         if (!participant) {
             return;
         }
-        this.room.setAffiliation(participant.getConnectionJid(), 'owner');
+        this.room.setAffiliation(participant.getConnectionJid(), 'admin');
     }
 
     /**

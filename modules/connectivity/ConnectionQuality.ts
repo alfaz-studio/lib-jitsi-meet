@@ -94,7 +94,10 @@ export interface ILocalStats {
         upload?: number;
     };
     bitrate?: {
+        audio?: { download: number; upload: number; };
+        download?: number;
         upload: number;
+        video?: { download: number; upload: number; };
     };
     bridgeCount?: number;
     connectionQuality: number;

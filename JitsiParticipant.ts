@@ -342,6 +342,22 @@ export default class JitsiParticipant {
     }
 
     /**
+     * @returns {Boolean} Whether this participant is a host or not.
+     * Host is defined strictly as having affiliation 'owner' in the MUC room.
+     */
+    isHost(): boolean {
+        const room: any = (this._conference as any).room;
+
+        if (!room || typeof room.getMemberAffiliation !== 'function') {
+            return false;
+        }
+
+        const affiliation = room.getMemberAffiliation(this._jid);
+
+        return affiliation === 'owner';
+    }
+
+    /**
      * Sets the bot type for the participant.
      * @param {String} newBotType - The new bot type to set.
      */

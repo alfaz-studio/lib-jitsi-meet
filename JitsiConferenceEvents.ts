@@ -287,6 +287,11 @@ export enum JitsiConferenceEvents {
     MESSAGE_RECEIVED = 'conference.messageReceived',
 
     /**
+     * A message was retracted (deleted).
+     */
+    MESSAGE_RETRACTED = 'conference.messageRetracted',
+
+    /**
      * Event fired when the conference metadata is updated.
      */
     METADATA_UPDATED = 'conference.metadata.updated',
@@ -349,9 +354,14 @@ export enum JitsiConferenceEvents {
     PHONE_NUMBER_CHANGED = 'conference.phoneNumberChanged',
 
     /**
-     * An answer for a pool was received.
+     * An answer for a poll was received.
      */
     POLL_ANSWER_RECEIVED = 'conference.pollAnswerReceived',
+
+    /**
+     * A poll was deleted.
+     */
+    POLL_DELETED = 'conference.pollDeleted',
 
     /**
      * A new poll was received or a poll is loaded from the history.
