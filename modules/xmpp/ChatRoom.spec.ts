@@ -940,7 +940,8 @@ describe('ChatRoom', () => {
             false,       // isVisitorMessage
             'msg-reply-1', // messageId
             undefined,   // source
-            'msg-123');  // replyToId ← this is what we are testing
+            'msg-123',   // replyToId ← this is what we are testing
+            false);      // isRetracted
         });
 
         it('parses group message without reply element and passes null replyToId', () => {
@@ -962,7 +963,8 @@ describe('ChatRoom', () => {
                 false,       // isVisitorMessage
                 'msg-reply-2', // messageId
                 undefined,   // source
-                null);       // replyToId ← null when no reply element
+                null,        // replyToId ← null when no reply element
+                false);      // isRetracted
         });
 
         it('ignores reply element with wrong namespace', () => {
@@ -988,7 +990,8 @@ describe('ChatRoom', () => {
                 false,       // isVisitorMessage
                 'msg-reply-3', // messageId
                 undefined,   // source
-                null);       // replyToId ← null because namespace is wrong
+                null,        // replyToId ← null because namespace is wrong
+                false);      // isRetracted
         });
 
         it('parses group message with reply element but no to attribute', () => {
@@ -1011,7 +1014,8 @@ describe('ChatRoom', () => {
                 false,       // isVisitorMessage
                 'msg-reply-4', // messageId
                 undefined,   // source
-                null);       // replyToId ← null when no 'to' attribute
+                null,        // replyToId ← null when no 'to' attribute
+                false);      // isRetracted
         });
     });
 });
