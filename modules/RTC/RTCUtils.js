@@ -145,6 +145,22 @@ function getConstraints(um = [], options = {}) {
                 echoCancellation: !disableAEC && !disableAP,
                 noiseSuppression: !disableNS && !disableAP
             };
+
+            // On Android mobile browsers, add Chrome-specific advanced audio
+            // processing constraints to combat echo from speaker-to-mic feedback.
+            // These are non-standard but widely supported on Chromium-based Android browsers.
+            if (browser.isAndroidBrowser() && browser.isChromiumBased() && !disableAP) {
+                Object.assign(constraints.audio, {
+                    googEchoCancellation: !disableAEC,
+                    googEchoCancellation2: !disableAEC,
+                    googAutoGainControl: !disableAGC,
+                    googNoiseSuppression: !disableNS,
+                    googHighpassFilter: true,
+                    googTypingNoiseDetection: true
+                });
+                logger.info('Applied Android-specific advanced audio constraints for echo reduction');
+            }
+
             if (stereo) {
                 Object.assign(constraints.audio, { channelCount: 2 });
             }
