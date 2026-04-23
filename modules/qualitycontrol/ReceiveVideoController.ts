@@ -295,4 +295,25 @@ export default class ReceiveVideoController {
             logger.info(`ReceiveVideoController - Setting the receiveResolutionLimitedByCpu flag to ${enabled}`);
         }
     }
+
+    /**
+     * Returns whether the receive resolution is currently limited due to CPU/bandwidth pressure.
+     *
+     * @returns {boolean}
+     */
+    isReceiveResolutionLimitedByCpu(): boolean {
+        return this._receiveResolutionLimitedByCpu;
+    }
+
+    /**
+     * Clears the CPU-limited receive resolution flag and restores _maxFrameHeight to MAX_HEIGHT,
+     * allowing the JVB to send full-resolution streams again.
+     *
+     * @returns {void}
+     */
+    resetReceiveResolutionLimit(): void {
+        logger.info('ReceiveVideoController - restoring receive resolution limit to MAX_HEIGHT');
+        this._receiveResolutionLimitedByCpu = false;
+        this.setPreferredReceiveMaxFrameHeight(MAX_HEIGHT);
+    }
 }

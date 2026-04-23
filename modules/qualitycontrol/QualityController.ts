@@ -36,6 +36,11 @@ const MIN_LAST_N = 3;
 // allowing recovery from transient CPU/bandwidth spikes in long sessions.
 const LAST_N_RAMPUP_UNBLOCK_TIMEOUT = 120000;
 
+// How long (ms) to wait after CPU/bandwidth pressure clears before restoring receive resolution.
+// Shorter than lastN ramp-up time because receive resolution is a local ceiling — restoring it
+// doesn't add send-side load, so oscillation risk is lower.
+const RECEIVE_RES_RAMPUP_TIME = 20000;
+
 enum QualityLimitationReason {
     BANDWIDTH = 'bandwidth',
     CPU = 'cpu',
@@ -117,6 +122,8 @@ export class QualityController {
     private _lastNRampupTime: number;
     private _lastNRampupTimeout: Optional<number>;
     private _limitedByCpuTimeout: Optional<number>;
+    private _receiveResRampupBlockedAt: number | null;
+    private _receiveResRampupTimeout: Optional<number>;
     private _receiveVideoController: ReceiveVideoController;
     private _sendVideoController: SendVideoController;
     private _timer: Optional<number>;
@@ -142,6 +149,7 @@ export class QualityController {
         this._encodeTimeStats = new Map();
         this._lastNRampupBlockedAt = null;
         this._lastNRampupTime = options.lastNRampupTime;
+        this._receiveResRampupBlockedAt = null;
         this._receiveVideoController = new ReceiveVideoController(conference);
         this._sendVideoController = new SendVideoController(conference);
 
@@ -394,6 +402,33 @@ export class QualityController {
                 }
             }
 
+            if (qualityLimitationReason === QualityLimitationReason.NONE
+                    && this.receiveVideoController.isReceiveResolutionLimitedByCpu()) {
+                if (this._receiveResRampupBlockedAt !== null
+                        && Date.now() - this._receiveResRampupBlockedAt > LAST_N_RAMPUP_UNBLOCK_TIMEOUT) {
+                    logger.info('QualityController - unblocking receive resolution ramp-up after '
+                        + `${LAST_N_RAMPUP_UNBLOCK_TIMEOUT / 1000}s of no limitation`);
+                    this._receiveResRampupBlockedAt = null;
+                }
+
+                if (!this._receiveResRampupTimeout && this._receiveResRampupBlockedAt === null) {
+                    this._receiveResRampupTimeout = window.setTimeout(() => {
+                        this._receiveResRampupTimeout = undefined;
+                        const updatedStats = this._encodeTimeStats.get(trackId);
+                        const latestSourceStats: ISourceStats = updatedStats.get(updatedStats.size() - 1);
+
+                        if (latestSourceStats.qualityLimitationReason === QualityLimitationReason.CPU
+                                || latestSourceStats.qualityLimitationReason === QualityLimitationReason.BANDWIDTH) {
+                            this._receiveResRampupBlockedAt = Date.now();
+                        } else {
+                            logger.info('QualityController - restoring receive resolution after CPU/bandwidth '
+                                + 'limitation cleared');
+                            this.receiveVideoController.resetReceiveResolutionLimit();
+                        }
+                    }, RECEIVE_RES_RAMPUP_TIME);
+                }
+            }
+
             return;
         }
 
@@ -413,6 +448,12 @@ export class QualityController {
         if (qualityLimitationReason === QualityLimitationReason.CPU
                 || qualityLimitationReason === QualityLimitationReason.BANDWIDTH) {
             this._cancelLastNRampupAndBlock();
+
+            if (this._receiveResRampupTimeout) {
+                window.clearTimeout(this._receiveResRampupTimeout);
+                this._receiveResRampupTimeout = undefined;
+            }
+            this._receiveResRampupBlockedAt = Date.now();
 
             const lastNChanged = this._lowerOrRaiseLastN(true /* lower */);
 
@@ -564,6 +605,11 @@ export class QualityController {
         if (this._lastNRampupTimeout) {
             clearTimeout(this._lastNRampupTimeout);
             this._lastNRampupTimeout = undefined;
+        }
+
+        if (this._receiveResRampupTimeout) {
+            clearTimeout(this._receiveResRampupTimeout);
+            this._receiveResRampupTimeout = undefined;
         }
 
         // Clear the encode time stats
