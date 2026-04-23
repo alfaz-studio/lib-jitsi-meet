@@ -1442,15 +1442,18 @@ export default class JingleSessionPC extends JingleSession {
         const replaceTracks = [];
         const workFunction = finishedCallback => {
             const remoteSdp = new SDP(this.peerconnection.remoteDescription.sdp, this.isP2P);
-            const recvOnlyTransceiver = this.peerconnection.peerconnection.getTransceivers()
-                    .find(t => t.receiver.track.kind === MediaType.VIDEO
-                        && t.direction === MediaDirection.RECVONLY
-                        && t.currentDirection === MediaDirection.RECVONLY);
 
             // Add transceivers by adding a new mline in the remote description for each track. Do not create a new
-            // m-line if a recv-only transceiver exists in the p2p case. The new track will be attached to the
-            // existing one in that case.
+            // m-line if a recv-only transceiver of the same media type exists in the p2p case — the new track will
+            // be attached to the existing one instead. Check per-track so audio and video are evaluated independently.
             for (const track of localTracks) {
+                const recvOnlyTransceiver = this.isP2P
+                    ? this.peerconnection.peerconnection.getTransceivers()
+                        .find(t => t.receiver.track.kind === track.getType()
+                            && t.direction === MediaDirection.RECVONLY
+                            && t.currentDirection === MediaDirection.RECVONLY)
+                    : undefined;
+
                 if (!this.isP2P || !recvOnlyTransceiver) {
                     remoteSdp.addMlineForNewSource(track.getType());
                 }
